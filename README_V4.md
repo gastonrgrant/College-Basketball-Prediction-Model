@@ -3,8 +3,13 @@
 ## Goal
 Keep Dean Oliver's Four Factors as the core basketball theory while replacing arbitrary live-model weights with historically learned NCAA values.
 
-## Validation design
-All reported 2022-2026 holdouts use strict forward validation: the model predicting season T is trained only on seasons before T. The V3 residual layer is trained only on expanding-window out-of-sample errors from the Oliver model.
+## Validation Design
+All reported 2022–2026 holdouts use strict forward validation: when predicting season T, the model is trained only on seasons prior to T. The V3 residual layer is trained only on expanding-window out-of-sample errors from the Four Factors model, preventing future-season information from leaking into earlier predictions.
+For live predictions, the model automatically retrieves current-season team statistics from Sports Reference and uses data available up to the current date.
+
+## Data Sources
+- **Historical NCAA data:** Kaggle NCAA March Madness historical datasets, used to construct the 2003–2026 pregame training dataset and train the model's historical coefficients.
+- **Current-season data:** Sports Reference College Basketball, used to retrieve up-to-date team, opponent, advanced, and roster statistics at prediction time.
 
 ## Models compared
 1. **Oliver Original** — preserves 40% eFG, 25% turnovers, 20% offensive rebounding, 15% free-throw rate. Offense and defense are paired 50/50 inside each family. Historical data learns only point scaling and location.
