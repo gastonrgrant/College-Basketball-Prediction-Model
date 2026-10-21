@@ -1,11 +1,14 @@
+import html
 import pandas as pd
 import numpy as np
 import re
 import requests
+import webbrowser
 from bs4 import BeautifulSoup, Comment
 from functools import lru_cache
 from datetime import date
 from io import StringIO
+from pathlib import Path
 
 
 # =========================================================
@@ -608,6 +611,7 @@ def get_team_physical_profile(team_name, year=None, min_mp=10.0):
     weights = []
     pos_groups = {"G": [], "F": [], "C": []}
     stars = []
+    players = []
 
     for n in minutes:
         if n not in heights:
@@ -632,6 +636,16 @@ def get_team_physical_profile(team_name, year=None, min_mp=10.0):
                 f"{s['pts']:.1f} ppg, {s['ast']:.1f} ast, {s['trb']:.1f} reb, "
                 f"{s['fg']:.3f} fg%, {s['fg3']:.3f} 3p%, {s['fg3a']:.1f} 3PA"
             )
+            players.append({
+                "name": n,
+                "pos": pos,
+                "pts": s["pts"],
+                "ast": s["ast"],
+                "trb": s["trb"],
+                "fg": s["fg"],
+                "fg3": s["fg3"],
+                "fg3a": s["fg3a"],
+            })
 
     if not h_vals:
         return None
@@ -651,7 +665,8 @@ def get_team_physical_profile(team_name, year=None, min_mp=10.0):
         "guards": avg_group(pos_groups["G"]),
         "forwards": avg_group(pos_groups["F"]),
         "centers": avg_group(pos_groups["C"]),
-        "stars": stars[:6]
+        "stars": stars[:6],
+        "players": players[:6],
     }
 # =========================================================
 # MATCHUP MODEL — V4.1 HISTORICALLY TRAINED OLIVER HYBRID
@@ -1056,14 +1071,24 @@ def pace_descriptor(p):
 def label_strength(p):
     if p is None:
         return None
-    if p >= 0.85: return "Elite"
-    if p >= 0.70: return "Strong"
-    if p >= 0.55: return "Above Avg"
-    if p >= 0.45: return "Average"
-    if p >= 0.30: return "Below Avg"
-    return "Poor"
+    if p >= 0.85:
+        return "elite"
+    if p >= 0.70:
+        return "strong"
+    if p >= 0.55:
+        return "above average"
+    if p >= 0.45:
+        return "average"
+    if p >= 0.30:
+        return "below average"
+    return "poor"
 
 
+def _profile_number(value):
+    value = float(value)
+    if abs(value) > 1.5:
+        return f"{value:.1f}"
+    return f"{value:.3f}".rstrip("0").rstrip(".")
 
 
 def style_tags(team_name, row, full_df, percentile_tables):
@@ -1073,128 +1098,180 @@ def style_tags(team_name, row, full_df, percentile_tables):
         "Rebounding": [],
         "Defense": [],
         "Tempo": [],
-        "Concerns": []
+        "Concerns": [],
     }
 
     def pct(col, lower=False):
-        val = oriented_percentile(
+        return oriented_percentile(
             full_df,
             percentile_tables,
             team_name,
             col,
-            lower_is_better=lower
+            lower_is_better=lower,
         )
-        return val if val is not None else None
 
-    def add(section, text):
-        if text not in sections[section]:
-            sections[section].append(text)
+    def add(section, text, score):
+        if text not in [existing for _, existing in sections[section]]:
+            sections[section].append((score, text))
 
-    # =========================
-    # OFFENSE
-    # =========================
+    def say(section, sentence, percentile):
+        if percentile is None:
+            return
+        add(section, sentence, abs(float(percentile) - 0.5))
+
     p_efg = pct("eFG%")
     if p_efg is not None:
-        label = label_strength(p_efg)
-        add("Offense", f"{label} efficiency (eFG% {row['eFG%']:.3f}, {pct_label(p_efg)})")
+        say(
+            "Offense",
+            f"Shooting efficiency is {label_strength(p_efg)}. "
+            f"The effective field-goal percentage is {_profile_number(row['eFG%'])} ({pct_label(p_efg)}).",
+            p_efg,
+        )
 
     p_3p = pct("3P%")
     if p_3p is not None:
-        label = label_strength(p_3p)
-        add("Offense", f"{label} 3pt shooting (3P% {row['3P%']:.3f}, {pct_label(p_3p)})")
+        say(
+            "Offense",
+            f"Three-point shooting is {label_strength(p_3p)}. "
+            f"The 3-point percentage is {_profile_number(row['3P%'])} ({pct_label(p_3p)}).",
+            p_3p,
+        )
 
     p_3par = pct("3PAr")
-    if p_3par is not None:
-        if p_3par >= 0.70:
-            add("Offense", f"Heavy 3pt reliance (3PAr {row['3PAr']:.3f})")
-        elif p_3par <= 0.35:
-            add("Offense", f"Paint-focused offense (3PAr {row['3PAr']:.3f})")
+    if p_3par is not None and (p_3par >= 0.70 or p_3par <= 0.35):
+        style = "relies heavily on threes" if p_3par >= 0.70 else "works through the paint"
+        say(
+            "Offense",
+            f"The offense {style}. "
+            f"The 3-point rate is {_profile_number(row['3PAr'])} ({pct_label(p_3par)}).",
+            p_3par,
+        )
 
     p_ftr = pct("FT/FGA")
     if p_ftr is not None:
-        label = label_strength(p_ftr)
-        add("Offense", f"{label} free throw pressure (FT/FGA {row['FT/FGA']:.3f}, {pct_label(p_ftr)})")
+        say(
+            "Offense",
+            f"Free-throw pressure is {label_strength(p_ftr)}. "
+            f"The free-throw rate is {_profile_number(row['FT/FGA'])} ({pct_label(p_ftr)}).",
+            p_ftr,
+        )
 
-    # =========================
-    # BALL CONTROL
-    # =========================
     p_tov = pct("TOV%", lower=True)
     if p_tov is not None:
-        label = label_strength(p_tov)
-        add("Ball Control", f"{label} ball security (TOV% {row['TOV%']:.3f}, {pct_label(p_tov)})")
+        say(
+            "Ball Control",
+            f"Ball security is {label_strength(p_tov)}. "
+            f"The turnover rate is {_profile_number(row['TOV%'])} ({pct_label(p_tov)}).",
+            p_tov,
+        )
 
     p_ast = pct("AST%")
     if p_ast is not None:
-        label = label_strength(p_ast)
-        add("Ball Control", f"{label} ball movement (AST% {row['AST%']:.3f}, {pct_label(p_ast)})")
+        say(
+            "Ball Control",
+            f"Ball movement is {label_strength(p_ast)}. "
+            f"The assist rate is {_profile_number(row['AST%'])} ({pct_label(p_ast)}).",
+            p_ast,
+        )
 
-    # =========================
-    # REBOUNDING
-    # =========================
     p_orb = pct("ORB%")
     if p_orb is not None:
-        label = label_strength(p_orb)
-        add("Rebounding", f"{label} offensive rebounding (ORB% {row['ORB%']:.3f}, {pct_label(p_orb)})")
+        say(
+            "Rebounding",
+            f"Offensive rebounding is {label_strength(p_orb)}. "
+            f"The offensive-rebound rate is {_profile_number(row['ORB%'])} ({pct_label(p_orb)}).",
+            p_orb,
+        )
 
     p_trb = pct("TRB%")
     if p_trb is not None:
-        label = label_strength(p_trb)
-        add("Rebounding", f"{label} total rebounding (TRB% {row['TRB%']:.3f}, {pct_label(p_trb)})")
+        say(
+            "Rebounding",
+            f"Total rebounding is {label_strength(p_trb)}. "
+            f"The total-rebound rate is {_profile_number(row['TRB%'])} ({pct_label(p_trb)}).",
+            p_trb,
+        )
 
-    # =========================
-    # DEFENSE
-    # =========================
     p_def_efg = pct("Opp_eFG%", lower=True)
     if p_def_efg is not None:
-        label = label_strength(p_def_efg)
-        add("Defense", f"{label} shot defense (Opp eFG% {row['Opp_eFG%']:.3f}, {pct_label(p_def_efg)})")
+        say(
+            "Defense",
+            f"Shot defense is {label_strength(p_def_efg)}. "
+            f"Opponents have an effective field-goal percentage of {_profile_number(row['Opp_eFG%'])} ({pct_label(p_def_efg)}).",
+            p_def_efg,
+        )
 
     p_def_tov = pct("Opp_TOV%")
     if p_def_tov is not None:
-        label = label_strength(p_def_tov)
-        add("Defense", f"{label} turnover creation (Opp TOV% {row['Opp_TOV%']:.3f}, {pct_label(p_def_tov)})")
+        say(
+            "Defense",
+            f"Turnover pressure is {label_strength(p_def_tov)}. "
+            f"The forced-turnover rate is {_profile_number(row['Opp_TOV%'])} ({pct_label(p_def_tov)}).",
+            p_def_tov,
+        )
 
     p_def_orb = pct("Opp_ORB%", lower=True)
     if p_def_orb is not None:
-        label = label_strength(p_def_orb)
-        add("Defense", f"{label} defensive rebounding (Opp ORB% {row['Opp_ORB%']:.3f}, {pct_label(p_def_orb)})")
+        say(
+            "Defense",
+            f"Defensive rebounding is {label_strength(p_def_orb)}. "
+            f"Opponents have an offensive-rebound rate of {_profile_number(row['Opp_ORB%'])} ({pct_label(p_def_orb)}).",
+            p_def_orb,
+        )
 
-    # =========================
-    # TEMPO
-    # =========================
     p_pace = pct("Pace")
-
     if p_pace is not None:
-        pct_str = pct_label(p_pace)
-
-        if p_pace >= .90:
-            add("Tempo", f"Very fast-paced ({pct_str}, {row['Pace']:.1f} possessions per game)")
+        if p_pace >= 0.90:
+            pace_word = "very fast"
         elif p_pace >= 0.70:
-            add("Tempo", f"Fast-paced ({pct_str}, {row['Pace']:.1f} possessions per game)")
+            pace_word = "fast"
         elif p_pace >= 0.60:
-            add("Tempo", f"Above average pace ({pct_str}, {row['Pace']:.1f} possessions per game)")
+            pace_word = "above average"
         elif p_pace <= 0.10:
-            add("Tempo", f"Very slow-paced ({pct_str}, {row['Pace']:.1f} possessions per game)")
+            pace_word = "very slow"
         elif p_pace <= 0.30:
-            add("Tempo", f"Slow-paced ({pct_str}, {row['Pace']:.1f} possessions per game)")
+            pace_word = "slow"
         elif p_pace <= 0.40:
-            add("Tempo", f"Below average pace ({pct_str}, {row['Pace']:.1f} possessions per game)")
+            pace_word = "below average"
         else:
-            add("Tempo", f"Average pace ({pct_str}, {row['Pace']:.1f} possessions per game)")
+            pace_word = "average"
+        say(
+            "Tempo",
+            f"Pace is {pace_word}. "
+            f"The team plays at {row['Pace']:.1f} possessions per game ({pct_label(p_pace)}).",
+            p_pace,
+        )
 
-    # =========================
-    # CONCERNS
-    # =========================
     if p_tov is not None and p_tov <= 0.35:
-        add("Concerns", f"Turnover issues (TOV% {row['TOV%']:.3f}, {pct_label(p_tov)})")
-
+        add(
+            "Concerns",
+            f"Turnovers are a problem. The turnover rate is {_profile_number(row['TOV%'])} ({pct_label(p_tov)}).",
+            1,
+        )
     if p_def_orb is not None and p_def_orb <= 0.40:
-        add("Concerns", f"Allows offensive rebounds (Opp ORB% {row['Opp_ORB%']:.3f}, {pct_label(p_def_orb)})")
-
+        add(
+            "Concerns",
+            f"Defensive rebounding is soft. Opponents have an offensive-rebound rate of {_profile_number(row['Opp_ORB%'])} ({pct_label(p_def_orb)}).",
+            1,
+        )
     if p_efg is not None and p_efg <= 0.35:
-        add("Concerns", f"Inefficient offense (eFG% {row['eFG%']:.3f}, {pct_label(p_efg)})")
+        add(
+            "Concerns",
+            f"Shooting efficiency is a problem. The effective field-goal percentage is {_profile_number(row['eFG%'])} ({pct_label(p_efg)}).",
+            1,
+        )
 
-    return {k: v[:3] for k, v in sections.items() if v}
+    chosen = {}
+    for section, items in sections.items():
+        ranked = sorted(items, key=lambda item: item[0], reverse=True)
+        if section == "Concerns":
+            texts = [text for _, text in ranked[:3]]
+        else:
+            notable = [text for score, text in ranked if score >= 0.06]
+            texts = notable[:3] or [text for _, text in ranked[:1]]
+        if texts:
+            chosen[section] = texts
+    return chosen
 
 def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
     notes = []
@@ -1208,8 +1285,24 @@ def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
             lower_is_better=lower
         )
 
+    readable = {
+        "eFG%": "effective field-goal percentage",
+        "Opp_eFG%": "opponent effective field-goal percentage",
+        "TOV%": "turnover rate",
+        "Opp_TOV%": "forced-turnover rate",
+        "ORB%": "offensive-rebound rate",
+        "Opp_ORB%": "opponent offensive-rebound rate",
+        "FT/FGA": "free-throw rate",
+        "Opp_FT/FGA": "opponent free-throw rate",
+        "AST%": "assist rate",
+        "3P%": "3-point percentage",
+        "3PAr": "3-point rate",
+        "Opp_3P%": "opponent 3-point percentage",
+    }
+
     def fmt(team, col, val, p):
-        return f"{team} {col} {val:.3f} ({pct_label(p)})"
+        name = readable.get(col, col.replace("_", " "))
+        return f"{team}'s {name} is {_profile_number(val)} ({pct_label(p)})"
 
     def mismatch(a_p, b_p):
         return a_p is not None and b_p is not None and a_p >= 0.55 and b_p <= 0.45
@@ -1239,26 +1332,26 @@ def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
 
         if mismatch(a_off, b_def):
             notes.append(
-                f"{team_a} {phrase} against {team_b} "
-                f"({fmt(team_a, off_stat, A[off_stat], a_off)} vs {fmt(team_b, def_stat, B[def_stat], b_def)})."
+                f"{team_a} {phrase} against {team_b}. "
+                f"{fmt(team_a, off_stat, A[off_stat], a_off)}, while {fmt(team_b, def_stat, B[def_stat], b_def)}."
             )
 
         if strong_edge(a_off, b_def):
             notes.append(
-                f"{team_a} has a major advantage in {label} "
-                f"({fmt(team_a, off_stat, A[off_stat], a_off)} vs {fmt(team_b, def_stat, B[def_stat], b_def)})."
+                f"{team_a} has a major advantage in {label}. "
+                f"{fmt(team_a, off_stat, A[off_stat], a_off)}, while {fmt(team_b, def_stat, B[def_stat], b_def)}."
             )
 
         if mismatch(b_off, a_def):
             notes.append(
-                f"{team_b} {phrase} against {team_a} "
-                f"({fmt(team_b, off_stat, B[off_stat], b_off)} vs {fmt(team_a, def_stat, A[def_stat], a_def)})."
+                f"{team_b} {phrase} against {team_a}. "
+                f"{fmt(team_b, off_stat, B[off_stat], b_off)}, while {fmt(team_a, def_stat, A[def_stat], a_def)}."
             )
 
         if strong_edge(b_off, a_def):
             notes.append(
-                f"{team_b} has a major advantage in {label} "
-                f"({fmt(team_b, off_stat, B[off_stat], b_off)} vs {fmt(team_a, def_stat, A[def_stat], a_def)})."
+                f"{team_b} has a major advantage in {label}. "
+                f"{fmt(team_b, off_stat, B[off_stat], b_off)}, while {fmt(team_a, def_stat, A[def_stat], a_def)}."
             )
 
     # =========================
@@ -1283,14 +1376,14 @@ def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
 
         if mismatch(a_p, b_p):
             notes.append(
-                f"{team_a} has the edge in {stat} "
-                f"({fmt(team_a, stat, A[stat], a_p)} vs {fmt(team_b, stat, B[stat], b_p)})."
+                f"{team_a} has the edge in {readable.get(stat, stat)}. "
+                f"{fmt(team_a, stat, A[stat], a_p)}, while {fmt(team_b, stat, B[stat], b_p)}."
             )
 
         if mismatch(b_p, a_p):
             notes.append(
-                f"{team_b} has the edge in {stat} "
-                f"({fmt(team_b, stat, B[stat], b_p)} vs {fmt(team_a, stat, A[stat], a_p)})."
+                f"{team_b} has the edge in {readable.get(stat, stat)}. "
+                f"{fmt(team_b, stat, B[stat], b_p)}, while {fmt(team_a, stat, A[stat], a_p)}."
             )
 
     # =========================
@@ -1313,14 +1406,14 @@ def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
 
         if mismatch(a_p, b_p):
             notes.append(
-                f"{team_a} has the stronger defense in {stat} "
-                f"({fmt(team_a, stat, A[stat], a_p)} vs {fmt(team_b, stat, B[stat], b_p)})."
+                f"{team_a} has the defensive edge in {readable.get(stat, stat)}. "
+                f"{fmt(team_a, stat, A[stat], a_p)}, while {fmt(team_b, stat, B[stat], b_p)}."
             )
 
         if mismatch(b_p, a_p):
             notes.append(
-                f"{team_b} has the stronger defense in {stat} "
-                f"({fmt(team_b, stat, B[stat], b_p)} vs {fmt(team_a, stat, A[stat], a_p)})."
+                f"{team_b} has the defensive edge in {readable.get(stat, stat)}. "
+                f"{fmt(team_b, stat, B[stat], b_p)}, while {fmt(team_a, stat, A[stat], a_p)}."
             )
 
     # =========================
@@ -1331,8 +1424,8 @@ def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
             faster = team_a if A["Pace"] > B["Pace"] else team_b
             slower = team_b if faster == team_a else team_a
             notes.append(
-                f"{faster} will try to push tempo while {slower} prefers slower play "
-                f"({team_a} {A['Pace']:.1f} vs {team_b} {B['Pace']:.1f})."
+                f"{faster} will try to push the tempo, while {slower} prefers a slower game. "
+                f"{team_a} plays at {A['Pace']:.1f} possessions per game, and {team_b} plays at {B['Pace']:.1f}."
             )
 
     # =========================
@@ -1605,73 +1698,747 @@ def print_sections(tag_dict):
         for item in items:
             print(f"  - {item}")
             
-def print_matchup_report(team_a, team_b, result, commentary, profile_a, profile_b):
-    print("\n" + "=" * 70)
-    print(f"{team_a} vs {team_b}")
-    print("=" * 70)
+_REPORT_CSS = """
+:root {
+  color-scheme: light;
+  --ink: #1a1814;
+  --muted: #5e584f;
+  --line: #ddd4c6;
+  --paper: #e9e2d6;
+  --sheet: #fbf8f4;
+  --track: #e6dfd4;
+  --a: #1d3557;
+  --b: #8c3a2f;
+  --sans: "Avenir Next", "Segoe UI", Helvetica, Arial, sans-serif;
+  --serif: "Iowan Old Style", Palatino, "Palatino Linotype", "Book Antiqua", Georgia, serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 16px;
+  line-height: 1.5;
+}
+.sheet {
+  max-width: 1080px;
+  margin: 28px auto;
+  padding: 36px 40px 28px;
+  background: var(--sheet);
+  border-top: 4px solid var(--ink);
+}
+.kicker, .meta, .verdict, .factor, .tags h3, .section-label, table, .stat, .footer, .pos, .size {
+  font-family: var(--sans);
+}
+.top, .split-labels, .factor-top, .compare-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.kicker, .section-label, .tags h3, .pos span, .players th {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.meta, .footer, .sub { color: var(--muted); }
+.meta { margin: 4px 0 0; font-size: 14px; }
+.hero {
+  display: grid;
+  grid-template-columns: 1fr minmax(240px, 300px) 1fr;
+  gap: 28px;
+  align-items: center;
+  padding: 28px 0 8px;
+}
+.hero > * { min-width: 0; }
+.side { margin: 0 0 6px; }
+h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 3vw, 3rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  overflow-wrap: break-word;
+}
+.side-a h1 { color: var(--a); }
+.side-b h1, .side-b { text-align: right; }
+.side-b h1 { color: var(--b); }
+.pick {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.verdict { text-align: center; }
+.spread {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 2rem;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.prob { margin: 4px 0 14px; font-size: 15px; }
+.split {
+  display: flex;
+  height: 14px;
+  background: var(--track);
+}
+.seg { min-width: 4px; }
+.seg.a { background: var(--a); }
+.seg.b { background: var(--b); }
+.split-labels { margin-top: 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.sub { margin: 12px 0 0; font-size: 13px; }
+section { padding: 26px 0; border-top: 1px solid var(--line); }
+.section-label { margin-bottom: 14px; }
+.factor { margin: 0 0 14px; }
+.factor-top { font-size: 14px; margin-bottom: 6px; }
+.diverge {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: 10px;
+  background: var(--track);
+}
+.half { display: flex; height: 100%; }
+.half.left { justify-content: flex-end; }
+.half.right { justify-content: flex-start; }
+.half span { display: block; height: 100%; }
+.half.left span { background: var(--a); }
+.half.right span { background: var(--b); }
+.diverge::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--ink);
+}
+.summary { margin: 8px 0 0; max-width: 70ch; }
+.group { margin-top: 22px; }
+.group h3 {
+  margin: 0 0 10px;
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 600;
+}
+.cmp-head, .cmp-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.2fr) 1fr 1fr;
+  gap: 22px;
+}
+.cmp-head {
+  align-items: end;
+  margin-bottom: 2px;
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 700;
+}
+.cmp-head .a { color: var(--a); }
+.cmp-head .b { color: var(--b); }
+.cmp-row {
+  align-items: center;
+  padding: 13px 0;
+  border-top: 1px solid var(--line);
+}
+.cmp-name strong {
+  display: block;
+  font-family: var(--serif);
+  font-size: 1.08rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.cmp-name span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.cmp-cell {
+  display: grid;
+  grid-template-columns: 64px 1fr 46px;
+  gap: 8px;
+  align-items: center;
+  font-family: var(--sans);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.cmp-cell .num { font-weight: 700; }
+.cmp-cell.a .num, .cmp-cell.a .mini-name { color: var(--a); }
+.cmp-cell.b .num, .cmp-cell.b .mini-name { color: var(--b); }
+.cmp-cell .pct { color: var(--muted); font-size: 13px; text-align: right; }
+.mini-name { display: none; font-size: 12px; font-weight: 700; }
+.meter { height: 9px; background: var(--track); }
+.meter span { display: block; height: 100%; }
+.cmp-cell.a .meter span, .stat-line.a .meter span { background: var(--a); }
+.cmp-cell.b .meter span, .stat-line.b .meter span { background: var(--b); }
+.hint { margin: 0 0 8px; color: var(--muted); font-family: var(--sans); font-size: 13px; line-height: 1.45; }
+.teams { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+.team-card { min-width: 0; padding-top: 12px; }
+.team-card.a { border-top: 3px solid var(--a); }
+.team-card.b { border-top: 3px solid var(--b); }
+.team-card h2 { margin: 0 0 6px; font-size: 1.6rem; letter-spacing: -0.03em; }
+.team-card.a h2 { color: var(--a); }
+.team-card.b h2 { color: var(--b); }
+.size { margin: 0 0 12px; font-size: 14px; }
+.pos { display: flex; gap: 18px; margin-bottom: 14px; }
+.pos strong { display: block; color: var(--ink); font-size: 16px; letter-spacing: 0; text-transform: none; }
+.players { overflow-x: auto; }
+.players table { width: 100%; min-width: 420px; border-collapse: collapse; }
+.players th, .players td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: right; }
+.players th:first-child, .players td:first-child { text-align: left; }
+.players td:first-child { font-family: var(--serif); }
+.tags ul { list-style: none; margin: 0; padding: 0; }
+.tags li { margin: 7px 0; padding-left: 12px; border-left: 2px solid var(--line); }
+.narrative { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; }
+.narrative p { margin: 0 0 12px; }
+.footer { margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 12px; }
+.reading { max-width: 72ch; }
+@media (max-width: 800px) {
+  .sheet { margin: 0; padding: 22px 16px 18px; }
+  .top { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .hero, .teams, .narrative { grid-template-columns: 1fr; }
+  .side-b, .side-b h1 { text-align: left; }
+  .verdict { text-align: left; }
+  .cmp-head { display: none; }
+  .cmp-row { grid-template-columns: 1fr; gap: 8px; }
+  .mini-name { display: block; }
+}
+@media print {
+  body { background: white; }
+  .sheet { margin: 0; border-top: 0; }
+}
+"""
 
-    print(f"Prediction: {result['winner']}")
-    print(f"Win Probability: {result['win_prob']*100:.1f}%")
-    print(f"Projected Spread: {result['projected_spread_text']}")
-    print(f"Expected Possessions: {result['expected_possessions']:.1f}")
-   
+_COMPARE_GROUPS = [
+    ("Team strength", [
+        ("Offensive rating", "Points scored per 100 possessions", "ORtg", False),
+        ("Defensive rating", "Points allowed per 100 possessions", "Opp_ORtg", True),
+        ("SRS", "Point margin against an average team", "SRS", False),
+        ("Strength of schedule", "Quality of the opponents faced", "SOS", False),
+        ("Pace", "Possessions per game", "Pace", False),
+    ]),
+    ("Four Factors", [
+        ("Effective FG%", "Shooting efficiency, counting threes as 1.5", "eFG%", False),
+        ("Turnover rate", "Lower is better, so the longer bar is the safer offense", "TOV%", True),
+        ("Offensive rebound %", "Share of missed shots the offense grabs", "ORB%", False),
+        ("Free throw rate", "Free throws attempted per field-goal attempt", "FT/FGA", False),
+    ]),
+    ("Shooting", [
+        ("3-point %", "Share of threes that go in", "3P%", False),
+        ("3-point attempt rate", "Share of shots that are threes", "3PAr", False),
+    ]),
+]
 
-    print("\nTop Edges")
-    print("-" * 70)
-    for edge in commentary["top_edges"]:
-        print(f"- {edge}")
 
-    print("\nSize Profile")
-    print("-" * 70)
-    if profile_a and profile_b:
-        print(f"- {team_a} averages {profile_a['avg_height_str']} across its {profile_a['rotation_size']} rotation players.")
-        print(f"- Position Size → G: {profile_a['guards']} | F: {profile_a['forwards']} | C: {profile_a['centers']}")
-        print(f"- {team_b} averages {profile_b['avg_height_str']} across its {profile_b['rotation_size']} rotation players.")
-        print(f"- Position Size → G: {profile_b['guards']} | F: {profile_b['forwards']} | C: {profile_b['centers']}")
+# Official school colors, chosen dark enough to read on the cream page.
+# A school that is not listed keeps the default navy or brick.
+TEAM_COLORS = {
+    "Air Force": "#003087", "Akron": "#041E42", "Alabama": "#9E1B32", "Arizona": "#AB0520",
+    "Arizona State": "#8C1D40", "Arkansas": "#9D2235", "Army": "#000000", "Auburn": "#E87722",
+    "Baylor": "#154734", "Boise State": "#0033A0", "Boston College": "#8C2232", "Bradley": "#A50034",
+    "Butler": "#13294B", "BYU": "#002E5D", "California": "#003262", "Charlotte": "#005035",
+    "Cincinnati": "#E00122", "Clemson": "#F56600", "Colorado": "#000000", "Colorado State": "#1E4D2B",
+    "Connecticut": "#000E2F", "Creighton": "#005CA9", "Davidson": "#AC1A2F", "Dayton": "#CE1141",
+    "DePaul": "#005EB8", "Drake": "#004477", "Duke": "#003087", "Duquesne": "#BA0C2F",
+    "East Carolina": "#592A8A", "Florida": "#FA4616", "Florida Atlantic": "#003366",
+    "Florida State": "#782F40", "Fordham": "#860038", "Fresno State": "#DB0032",
+    "George Mason": "#006633", "George Washington": "#002654", "Georgetown": "#041E42",
+    "Georgia": "#BA0C2F", "Georgia Tech": "#003057", "Gonzaga": "#C8102E", "Grand Canyon": "#522398",
+    "Harvard": "#A51C30", "Houston": "#C8102E", "Illinois": "#E84A27", "Illinois State": "#CE1126",
+    "Indiana": "#990000", "Indiana State": "#003DA5", "Iowa": "#000000", "Iowa State": "#C8102E",
+    "Kansas": "#0051BA", "Kansas State": "#512888", "Kentucky": "#0033A0", "Liberty": "#C41230",
+    "Louisville": "#AD0000", "Loyola Chicago": "#922247", "LSU": "#461D7C", "Marquette": "#003366",
+    "Maryland": "#E03A3E", "Massachusetts": "#881C1C", "Memphis": "#003087", "Miami (FL)": "#F47321",
+    "Miami (OH)": "#C3142D", "Michigan": "#00274C", "Michigan State": "#18453B", "Minnesota": "#7A0019",
+    "Mississippi State": "#660000", "Missouri": "#000000", "Missouri State": "#5E0009",
+    "Murray State": "#002144", "Navy": "#00205B", "NC State": "#CC0000", "Nebraska": "#E41C38",
+    "Nevada": "#003366", "New Mexico": "#BA0C2F", "North Carolina": "#4B9CD3", "North Texas": "#00853E",
+    "Northern Iowa": "#4B116F", "Northwestern": "#4E2A84", "Notre Dame": "#0C2340", "Ohio State": "#BB0000",
+    "Oklahoma": "#841617", "Oklahoma State": "#FF6600", "Ole Miss": "#CE1126", "Oregon": "#154733",
+    "Oregon State": "#DC4405", "Penn State": "#041E42", "Pittsburgh": "#003594", "Princeton": "#E87722",
+    "Providence": "#000000", "Purdue": "#000000", "Rhode Island": "#002868", "Rice": "#00205B",
+    "Richmond": "#990000", "Rutgers": "#CC0033", "Saint Joseph's": "#9E1B32", "Saint Louis": "#003DA5",
+    "Saint Mary's": "#003366", "San Diego State": "#A6192E", "San Francisco": "#00543C",
+    "Santa Clara": "#862633", "Seton Hall": "#004488", "SMU": "#0033A0", "South Carolina": "#73000A",
+    "South Florida": "#006747", "St. Bonaventure": "#582C83", "St. John's": "#C8102E",
+    "St. John's (NY)": "#C8102E", "Stanford": "#8C1515", "Syracuse": "#F76900", "TCU": "#4D1979",
+    "Temple": "#9D2235", "Tennessee": "#FF8200", "Texas": "#BF5700", "Texas A&M": "#500000",
+    "Texas Tech": "#CC0000", "Tulane": "#006747", "Tulsa": "#002D72", "UAB": "#1E6B52",
+    "UCF": "#000000", "UCLA": "#2D68C4", "UConn": "#000E2F", "UMass": "#881C1C", "UNLV": "#B10202",
+    "USC": "#990000", "Utah": "#CC0000", "Utah State": "#0F2439", "Vanderbilt": "#000000",
+    "VCU": "#000000", "Villanova": "#00205B", "Virginia": "#232D4B", "Virginia Tech": "#630031",
+    "Wake Forest": "#000000", "Washington": "#4B2E83", "Washington State": "#981E32",
+    "West Virginia": "#002855", "Wichita State": "#000000", "Wisconsin": "#C5050C",
+    "Wyoming": "#492F24", "Xavier": "#0C2340", "Yale": "#00356B",
+}
+
+
+def _esc(value):
+    return html.escape("" if value is None else str(value), quote=True)
+
+
+def _clean_note(text):
+    return re.sub(r"\s+", " ", str(text)).strip()
+
+
+_NOTE_LABELS = (
+    ("Opp_FT/FGA", "opponent free-throw rate"),
+    ("Opp FT/FGA", "opponent free-throw rate"),
+    ("Opp_3PAr", "opponent 3-point rate"),
+    ("Opp 3PAr", "opponent 3-point rate"),
+    ("Opp_3P%", "opponent 3-point percentage"),
+    ("Opp 3P%", "opponent 3-point percentage"),
+    ("Opp_eFG%", "opponent effective FG%"),
+    ("Opp eFG%", "opponent effective FG%"),
+    ("Opp_TOV%", "forced-turnover rate"),
+    ("Opp TOV%", "forced-turnover rate"),
+    ("Opp_ORB%", "opponent offensive-rebound rate"),
+    ("Opp ORB%", "opponent offensive-rebound rate"),
+    ("FT/FGA", "free-throw rate"),
+    ("3PAr", "3-point rate"),
+    ("3P%", "3-point percentage"),
+    ("eFG%", "effective FG%"),
+    ("TOV%", "turnover rate"),
+    ("ORB%", "offensive-rebound rate"),
+    ("AST%", "assist rate"),
+    ("TRB%", "total-rebound rate"),
+)
+
+
+def _plain_note(text):
+    text = _clean_note(text)
+    for token, label in _NOTE_LABELS:
+        text = text.replace(token, label)
+
+    def trim(match):
+        number = float(match.group(0))
+        if abs(number) >= 10:
+            return f"{number:.1f}"
+        trimmed = f"{number:.3f}".rstrip("0").rstrip(".")
+        return trimmed
+
+    return re.sub(r"\d+\.\d+", trim, text)
+
+
+def _fmt_value(col, value):
+    value = float(value)
+    if col in {"SRS", "SOS", "ORtg", "Opp_ORtg", "Pace"}:
+        return f"{value:.1f}"
+    if abs(value) > 1.5:
+        return f"{value:.1f}"
+    return f"{value:.3f}"
+
+
+def _shot_pct(value):
+    value = float(value)
+    if abs(value) <= 1.5:
+        value *= 100.0
+    return f"{value:.1f}%"
+
+
+def _ordinal(p):
+    label = pct_label(p)
+    if not label:
+        return "—"
+    return label.replace(" percentile", "")
+
+
+def _favor_phrase(value, team_a, team_b):
+    if abs(value) < 0.05:
+        return "are a wash"
+    team = team_a if value > 0 else team_b
+    return f"favor {_esc(team)} by {abs(value):.1f} points"
+
+
+def _season_line():
+    retrieved = date.today().strftime("%B %d, %Y").replace(" 0", " ")
+    year = ACTIVE_SEASON_YEAR
+    if year is None:
+        return f"Local CSV stats · {retrieved}"
+    end = int(year)
+    return f"{end - 1}–{str(end)[-2:]} season · stats through {retrieved}"
+
+
+def _channel(value):
+    value = value / 255.0
+    if value <= 0.04045:
+        return value / 12.92
+    return ((value + 0.055) / 1.055) ** 2.4
+
+
+def _luminance(hex_color):
+    hex_color = hex_color.lstrip("#")
+    red, green, blue = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    return 0.2126 * _channel(red) + 0.7152 * _channel(green) + 0.0722 * _channel(blue)
+
+
+def _contrast(hex_a, hex_b):
+    lighter = max(_luminance(hex_a), _luminance(hex_b))
+    darker = min(_luminance(hex_a), _luminance(hex_b))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _darken(hex_color, factor):
+    hex_color = hex_color.lstrip("#")
+    red, green, blue = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    return "#{:02x}{:02x}{:02x}".format(
+        int(red * factor), int(green * factor), int(blue * factor)
+    )
+
+
+def _readable_color(hex_color, background="#fbf8f4", minimum=4.5):
+    color = hex_color
+    if _contrast(color, background) >= minimum:
+        return color
+    for step in range(1, 18):
+        mixed = _darken(hex_color, 1 - step * 0.05)
+        if _contrast(mixed, background) >= minimum:
+            return mixed
+    return "#1a1814"
+
+
+def _team_color_pair(team_a, team_b):
+    fallback_a, fallback_b = "#1d3557", "#8c3a2f"
+    color_a = _readable_color(TEAM_COLORS[team_a]) if team_a in TEAM_COLORS else None
+    color_b = _readable_color(TEAM_COLORS[team_b]) if team_b in TEAM_COLORS else None
+    if color_a and color_b:
+        if color_a.lower() == color_b.lower():
+            color_b = _darken(color_b, 0.72)
+        return color_a, color_b
+    if color_a:
+        other = fallback_b if _contrast(color_a, fallback_b) > _contrast(color_a, fallback_a) else fallback_a
+        if other.lower() == color_a.lower():
+            other = fallback_b
+        return color_a, other
+    if color_b:
+        other = fallback_a if _contrast(color_b, fallback_a) > _contrast(color_b, fallback_b) else fallback_b
+        if other.lower() == color_b.lower():
+            other = fallback_a
+        return other, color_b
+    return fallback_a, fallback_b
+
+
+def _comparison_html(team_a, team_b, row_a, row_b, full_df, percentile_tables):
+    groups = []
+    for title, specs in _COMPARE_GROUPS:
+        rows = [
+            "<div class=\"cmp-head\"><span></span>"
+            f"<span class=\"a\">{_esc(team_a)}</span>"
+            f"<span class=\"b\">{_esc(team_b)}</span></div>"
+        ]
+        any_row = False
+        for label, gloss, col, lower in specs:
+            if col not in row_a.index or col not in row_b.index:
+                continue
+            if pd.isna(row_a[col]) or pd.isna(row_b[col]):
+                continue
+            any_row = True
+            cells = []
+            for team, row, css_class in (
+                (team_a, row_a, "a"),
+                (team_b, row_b, "b"),
+            ):
+                percentile = oriented_percentile(
+                    full_df, percentile_tables, team, col, lower_is_better=lower
+                )
+                width = 0 if percentile is None else max(0, min(100, round(percentile * 100)))
+                cells.append(
+                    "<div class=\"cmp-cell {css}\">"
+                    "<span class=\"mini-name\">{team}</span>"
+                    "<span class=\"num\">{value}</span>"
+                    "<span class=\"meter\"><span style=\"width:{width}%\"></span></span>"
+                    "<span class=\"pct\">{ordinal}</span>"
+                    "</div>".format(
+                        css=css_class,
+                        team=_esc(team),
+                        value=_fmt_value(col, row[col]),
+                        width=width,
+                        ordinal=_esc(_ordinal(percentile)),
+                    )
+                )
+            rows.append(
+                "<div class=\"cmp-row\">"
+                f"<div class=\"cmp-name\"><strong>{_esc(label)}</strong><span>{_esc(gloss)}</span></div>"
+                + "".join(cells)
+                + "</div>"
+            )
+        if any_row:
+            groups.append(f"<div class=\"group\"><h3>{_esc(title)}</h3>{''.join(rows)}</div>")
+    if not groups:
+        return ""
+    return (
+        "<section>"
+        "<p class=\"section-label\">Season profile</p>"
+        "<p class=\"hint\">Each row is one stat. The number is the season figure, the bar is the national rank, "
+        "and a longer bar is better. Defensive rating and turnover rate are ranked so a longer bar means the better defense or fewer turnovers.</p>"
+        + "".join(groups)
+        + "</section>"
+    )
+
+
+def _factor_html(team_a, team_b, result):
+    parts = result.get("margin_components") or {}
+    factors = [
+        ("Shooting", parts.get("eFG_margin", 0.0)),
+        ("Turnovers", parts.get("turnover_margin", 0.0)),
+        ("Rebounding", parts.get("rebounding_margin", 0.0)),
+        ("Free throws", parts.get("free_throw_margin", 0.0)),
+    ]
+    scale = max([abs(float(value)) for _, value in factors] + [1.0])
+    rows = []
+    for label, value in factors:
+        value = float(value)
+        magnitude = min(100.0, abs(value) / scale * 100.0)
+        left = f"{magnitude:.1f}" if value > 0 else "0"
+        right = f"{magnitude:.1f}" if value < 0 else "0"
+        if abs(value) < 0.05:
+            detail = "Even"
+        else:
+            favored = team_a if value > 0 else team_b
+            detail = f"{abs(value):.1f} pts toward {favored}"
+        rows.append(
+            "<div class=\"factor\">"
+            f"<div class=\"factor-top\"><span>{_esc(label)}</span><span>{_esc(detail)}</span></div>"
+            "<div class=\"diverge\" aria-hidden=\"true\">"
+            f"<div class=\"half left\"><span style=\"width:{left}%\"></span></div>"
+            f"<div class=\"half right\"><span style=\"width:{right}%\"></span></div>"
+            "</div></div>"
+        )
+    four = float(parts.get("four_factor_margin", 0.0))
+    residual = float(parts.get("v3_residual_correction", 0.0))
+    summary = (
+        f"The Four Factors {_favor_phrase(four, team_a, team_b)}. "
+        f"Other adjustments {_favor_phrase(residual, team_a, team_b)}."
+    )
+    return (
+        "<section>"
+        "<p class=\"section-label\">Where the margin comes from</p>"
+        f"<p class=\"hint\">Left of the center line favors {_esc(team_a)}. Right favors {_esc(team_b)}.</p>"
+        + "".join(rows)
+        + f"<p class=\"summary\">{summary}</p>"
+        + "</section>"
+    )
+
+
+def _players_html(profile):
+    players = sorted(profile.get("players") or [], key=lambda player: player["pts"], reverse=True)
+    if not players:
+        return ""
+    body = []
+    for player in players:
+        body.append(
+            "<tr>"
+            f"<td>{_esc(player['name'])}</td>"
+            f"<td>{_esc(player['pos'])}</td>"
+            f"<td>{player['pts']:.1f}</td>"
+            f"<td>{player['trb']:.1f}</td>"
+            f"<td>{player['ast']:.1f}</td>"
+            f"<td>{_shot_pct(player['fg'])}</td>"
+            f"<td>{_shot_pct(player['fg3'])}</td>"
+            "</tr>"
+        )
+    return (
+        "<div class=\"players\"><table>"
+        "<thead><tr><th>Player</th><th>Pos</th><th>PTS</th><th>REB</th><th>AST</th><th>FG</th><th>3P</th></tr></thead>"
+        f"<tbody>{''.join(body)}</tbody></table></div>"
+    )
+
+
+def _positions_html(profile):
+    groups = [
+        ("Guards", profile.get("guards")),
+        ("Forwards", profile.get("forwards")),
+        ("Centers", profile.get("centers")),
+    ]
+    cells = [
+        f"<div><span>{_esc(label)}</span><strong>{_esc(value)}</strong></div>"
+        for label, value in groups
+        if value
+    ]
+    if not cells:
+        return ""
+    return f"<div class=\"pos\">{''.join(cells)}</div>"
+
+
+def _tags_html(tag_dict):
+    if not tag_dict:
+        return ""
+    blocks = []
+    for section, items in tag_dict.items():
+        lis = "".join(f"<li>{_esc(_plain_note(item))}</li>" for item in items)
+        blocks.append(f"<h3>{_esc(section)}</h3><ul>{lis}</ul>")
+    return f"<div class=\"tags\">{''.join(blocks)}</div>"
+
+
+def _team_card(team, css_class, profile, tags):
+    parts = [f"<article class=\"team-card {css_class}\"><h2>{_esc(team)}</h2>"]
+    if profile:
+        parts.append(
+            f"<p class=\"size\">{_esc(profile['avg_height_str'])} average"
+            f" · {int(profile['rotation_size'])} rotation players</p>"
+        )
+        parts.append(_positions_html(profile))
+        parts.append(_players_html(profile))
     else:
-        print("- Physical profile unavailable for one or both teams.")
+        parts.append("<p class=\"hint\">Roster and height data were not available for this team.</p>")
+    parts.append(_tags_html(tags))
+    parts.append("</article>")
+    return "".join(parts)
 
-    print(f"\n{team_a} Profile")
-    print("-" * 60)
 
-    if profile_a and profile_a.get("stars"):
-        print("Key Players:")
-        for s in profile_a["stars"]:
-            print(f"  - {s}")
-        print()
+def _notes_html(commentary):
+    columns = []
+    for title, key in (("Matchup notes", "tensions"), ("Game script", "game_script")):
+        notes = [_plain_note(note) for note in commentary.get(key) or []]
+        notes = [note for note in notes if note]
+        if not notes:
+            continue
+        paragraphs = "".join(f"<p>{_esc(note)}</p>" for note in notes)
+        columns.append(f"<div><p class=\"section-label\">{title}</p>{paragraphs}</div>")
+    edges = [_plain_note(edge) for edge in commentary.get("top_edges") or []]
+    edges = [edge for edge in edges if edge]
+    blocks = []
+    if edges:
+        paragraphs = "".join(f"<p>{_esc(edge)}</p>" for edge in edges)
+        blocks.append(
+            f"<section><p class=\"section-label\">Why this pick</p><div class=\"reading\">{paragraphs}</div></section>"
+        )
+    if columns:
+        blocks.append(f"<section><div class=\"narrative\">{''.join(columns)}</div></section>")
+    return "".join(blocks)
 
-    print("\nKey Strengths")
-    print("-" * 70)
-    print_sections(commentary["winner_tags"] if result["winner"] == team_a else commentary["loser_tags"])
 
-    print("\n" + "=" * 70)
+def _report_slug(name):
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
+    return slug or "team"
 
-    print(f"\n{team_b} Profile")
-    print("-" * 60)
 
-    if profile_b and profile_b.get("stars"):
-        print("Key Players:")
-        for s in profile_b["stars"]:
-            print(f"  - {s}")
-        print()
+def build_matchup_page(team_a, team_b, result, commentary, profile_a, profile_b, full_df, percentile_tables):
+    row_a = full_df.loc[full_df["Team"] == team_a].iloc[0]
+    row_b = full_df.loc[full_df["Team"] == team_b].iloc[0]
+    prob_a = float(result["win_prob_a"])
+    prob_b = 1.0 - prob_a
+    winner = result["winner"]
+    pick_a = "<p class=\"pick\">Pick</p>" if winner == team_a else ""
+    pick_b = "<p class=\"pick\">Pick</p>" if winner == team_b else ""
+    tags_a = commentary["winner_tags"] if winner == team_a else commentary["loser_tags"]
+    tags_b = commentary["winner_tags"] if winner == team_b else commentary["loser_tags"]
+    flex_a = max(prob_a, 0.02)
+    flex_b = max(prob_b, 0.02)
+    color_a, color_b = _team_color_pair(team_a, team_b)
+    body = f"""
+    <header class="top">
+      <div>
+        <p class="kicker">Matchup report</p>
+        <p class="meta">{_esc(_season_line())}</p>
+      </div>
+      <p class="meta">Four Factors model</p>
+    </header>
+    <section class="hero">
+      <div class="side-a">
+        <p class="side">First team</p>
+        <h1>{_esc(team_a)}</h1>
+        {pick_a}
+      </div>
+      <div class="verdict">
+        <p class="kicker">Projected spread</p>
+        <p class="spread">{_esc(result['projected_spread_text'].replace(' -', ' −'))}</p>
+        <p class="prob">{result['win_prob'] * 100:.1f}% win probability</p>
+        <div class="split" role="img" aria-label="{_esc(team_a)} {prob_a * 100:.1f} percent, {_esc(team_b)} {prob_b * 100:.1f} percent">
+          <div class="seg a" style="flex:{flex_a:.4f} 1 0"></div>
+          <div class="seg b" style="flex:{flex_b:.4f} 1 0"></div>
+        </div>
+        <div class="split-labels">
+          <span>{_esc(team_a)} {prob_a * 100:.1f}%</span>
+          <span>{prob_b * 100:.1f}% {_esc(team_b)}</span>
+        </div>
+        <p class="sub">{result['expected_possessions']:.1f} expected possessions · upset risk { _esc(result['upset_risk']).lower() }</p>
+      </div>
+      <div class="side-b">
+        <p class="side">Second team</p>
+        <h1>{_esc(team_b)}</h1>
+        {pick_b}
+      </div>
+    </section>
+    {_factor_html(team_a, team_b, result)}
+    {_comparison_html(team_a, team_b, row_a, row_b, full_df, percentile_tables)}
+    <section>
+      <p class="section-label">Teams</p>
+      <div class="teams">
+        {_team_card(team_a, "a", profile_a, tags_a)}
+        {_team_card(team_b, "b", profile_b, tags_b)}
+      </div>
+    </section>
+    {_notes_html(commentary)}
+    <p class="footer">Sports-Reference college basketball stats. The spread is the model's projected margin, built mainly from Dean Oliver's Four Factors. Bar colors are school colors when the program knows them.</p>
+    """
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{_esc(team_a)} vs {_esc(team_b)}</title>
+  <style>{_REPORT_CSS}</style>
+</head>
+<body>
+  <main class="sheet" style="--a:{color_a};--b:{color_b}">
+    {body}
+  </main>
+</body>
+</html>
+"""
 
-    print("\nKey Strengths")
-    print("-" * 70)
-    print_sections(commentary["winner_tags"] if result["winner"] == team_b else commentary["loser_tags"])
 
-    print("\n" + "=" * 70)
+def show_matchup_report(
+    team_a,
+    team_b,
+    result,
+    commentary,
+    profile_a,
+    profile_b,
+    full_df,
+    percentile_tables,
+    open_browser=True,
+):
+    page = build_matchup_page(
+        team_a,
+        team_b,
+        result,
+        commentary,
+        profile_a,
+        profile_b,
+        full_df,
+        percentile_tables,
+    )
+    out_dir = Path(__file__).resolve().parent / "reports"
+    out_dir.mkdir(exist_ok=True)
+    path = out_dir / f"{_report_slug(team_a)}_vs_{_report_slug(team_b)}.html"
+    path.write_text(page, encoding="utf-8")
 
-    print("\nMatchup Notes")
-    print("-" * 70)
-    for note in commentary["tensions"]:
-        print(f"- {note}")
-
-    print("\nGame Script")
-    print("-" * 70)
-    for note in commentary["game_script"]:
-        print(f"- {note}")
-
-    print("\n" + "=" * 70 + "\n")
+    print(f"\n{team_a} vs {team_b}")
+    print(f"Pick: {result['projected_spread_text']}  ·  {result['win_prob'] * 100:.1f}% to win")
+    print(f"Report: {path}")
+    if open_browser:
+        try:
+            opened = webbrowser.open(path.as_uri())
+        except Exception:
+            opened = False
+        if not opened:
+            print("Open that file in a browser to read the full report.")
+    print()
+    return path
 
 
 # =========================================================
@@ -1763,13 +2530,15 @@ def main():
             profile_b = get_team_physical_profile(team_b)
 
             # 🔥 PRINT
-            print_matchup_report(
+            show_matchup_report(
                 team_a,
                 team_b,
                 result,
                 commentary,
                 profile_a,
-                profile_b
+                profile_b,
+                full_df,
+                percentile_tables,
             )
 
         except Exception as e:
