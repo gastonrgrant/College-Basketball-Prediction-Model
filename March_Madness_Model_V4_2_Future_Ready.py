@@ -2,9 +2,10 @@ import pandas as pd
 import numpy as np
 import re
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 from functools import lru_cache
 from datetime import date
+from io import StringIO
 
 
 # =========================================================
@@ -171,10 +172,13 @@ def convert_numeric(df: pd.DataFrame, exclude=None) -> pd.DataFrame:
     df = df.copy()
     for col in df.columns:
         if col not in exclude:
-            df[col] = pd.to_numeric(df[col], errors="ignore")
+            # pandas 3 removed errors="ignore". Keep the old behavior:
+            # convert the column when every value parses, otherwise leave it.
+            try:
+                df[col] = pd.to_numeric(df[col])
+            except (ValueError, TypeError):
+                pass
     return df
-
-from bs4 import Comment
 
 def scrape_table(url):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -195,7 +199,7 @@ def scrape_table(url):
 
     for t in tables:
         if "School" in t.text:
-            df = pd.read_html(str(t))[0]
+            df = pd.read_html(StringIO(str(t)))[0]
 
             # 🔥 FIX: flatten multi-index columns
             if isinstance(df.columns, pd.MultiIndex):
