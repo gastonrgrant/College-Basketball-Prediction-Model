@@ -40,6 +40,11 @@ DATA_SOURCE_URL = None
 # Each stat is games / (games + K) this season and the rest last season.
 # K = 5 was chosen on 2016-2021 and tested on 2022-2026 (training/test_season_blend.py).
 SEASON_BLEND_K = 5.0
+# SRS and SOS pass every early result through other teams' ratings, so after two
+# games they run from about -40 to +70. Their this-season share grows more slowly.
+# Untested: Kaggle's schedule measure is built differently.
+SCHEDULE_BLEND_K = 15.0
+SCHEDULE_RATING_COLUMNS = ("SRS", "SOS")
 CURRENT_RAW_DF = None
 PRIOR_SEASON_DF = None
 BLEND_NOTES = {}
@@ -345,9 +350,9 @@ def blend_columns(full_df, prior_df):
     return [col for col in numeric if col in prior_df.columns and col != "G"]
 
 
-def season_weight(games):
+def season_weight(games, k=None):
     games = 0.0 if pd.isna(games) else float(games)
-    return games / (games + SEASON_BLEND_K)
+    return games / (games + (SEASON_BLEND_K if k is None else k))
 
 
 def blend_with_prior_season(full_df, prior_df):
@@ -357,7 +362,10 @@ def blend_with_prior_season(full_df, prior_df):
     current = full_df[cols].to_numpy(dtype=float)
     last = prior[cols].to_numpy(dtype=float)
     current, last = np.where(np.isnan(current), last, current), np.where(np.isnan(last), current, last)
-    weight = full_df["G"].map(season_weight).to_numpy()[:, None]
+    weight = np.column_stack([
+        full_df["G"].map(lambda g: season_weight(g, SCHEDULE_BLEND_K if col in SCHEDULE_RATING_COLUMNS else None))
+        for col in cols
+    ])
     out = full_df.copy()
     out[cols] = weight * current + (1.0 - weight) * last
     return out
@@ -661,6 +669,52 @@ def roster_starting_point(team, prior_df):
     return {"values": values, "transfers": transfers, "covered_share": covered_share}
 
 
+def schedule_strength_so_far(team, full_df):
+    """Average rating of the Division I opponents team has played this season.
+
+    Sports-Reference's SOS is the same average, but over opponents' this-season
+    SRS. This uses their blended SRS, which is steadier early in the season.
+    """
+    page = team_page_html(team, ACTIVE_SEASON_YEAR, "-schedule")
+    if page is None:
+        return None
+    table = _find_table(BeautifulSoup(page, "lxml"), "schedule")
+    if table is None or table.find("tbody") is None:
+        return None
+    ratings = full_df.drop_duplicates("LookupKey").set_index("LookupKey")["SRS"]
+    opponents = []
+    for row in table.find("tbody").find_all("tr"):
+        result = row.find(attrs={"data-stat": "game_result"})
+        opponent = row.find(attrs={"data-stat": "opp_name"})
+        if result is None or not result.text.strip() or opponent is None or opponent.find("a") is None:
+            continue
+        name = re.sub(r"\s*\(\d+\)\s*$", "", opponent.find("a").text.replace("\xa0", " ")).strip()
+        rating = ratings.get(canonical_lookup_name(name))
+        if rating is not None and pd.notna(rating):
+            opponents.append(float(rating))
+    return float(np.mean(opponents)) if opponents else None
+
+
+def apply_schedule_strength(full_df, team):
+    """Rebuild team's SOS from steadier opponent ratings, blended like other stats."""
+    if CURRENT_RAW_DF is None or PRIOR_SEASON_DF is None or "SOS" not in full_df.columns:
+        return None
+    prior = _prior_team_row(PRIOR_SEASON_DF, team)
+    raw = CURRENT_RAW_DF.loc[CURRENT_RAW_DF["Team"] == team]
+    if prior is None or raw.empty or pd.isna(prior["SOS"]):
+        return None
+    games = raw.iloc[0]["G"]
+    if pd.isna(games) or float(games) <= 0:
+        return None
+    so_far = schedule_strength_so_far(team, full_df)
+    if so_far is None:
+        return None
+    weight = season_weight(games)
+    value = weight * so_far + (1.0 - weight) * float(prior["SOS"])
+    full_df.loc[full_df["Team"] == team, "SOS"] = value
+    return value
+
+
 def apply_roster_starting_point(full_df, team):
     """Re-blend team's Four Factors against its roster-adjusted last season."""
     if team in BLEND_NOTES or CURRENT_RAW_DF is None or PRIOR_SEASON_DF is None:
@@ -680,6 +734,7 @@ def apply_roster_starting_point(full_df, team):
             full_df.loc[rows, col] = weight * float(current) + (1.0 - weight) * value
         note["transfers"] = start["transfers"]
         note["covered_share"] = start["covered_share"]
+    note["schedule"] = apply_schedule_strength(full_df, team) if has_prior and weight < 1.0 else None
     BLEND_NOTES[team] = note
 
 
@@ -838,8 +893,11 @@ def build_team_slug(name):
 
 
 @lru_cache(maxsize=None)
-def team_page_html(team_name, year):
-    """Sports-Reference team season page, or None if no slug matches."""
+def team_page_html(team_name, year, page=""):
+    """Sports-Reference team season page, or None if no slug matches.
+
+    page="-schedule" gives the schedule page.
+    """
     persist = ACTIVE_SEASON_YEAR is not None and int(year) < int(ACTIVE_SEASON_YEAR)
     names = [
         team_name,
@@ -853,7 +911,7 @@ def team_page_html(team_name, year):
         if slug in tried:
             continue
         tried.add(slug)
-        url = f"https://www.sports-reference.com/cbb/schools/{slug}/men/{int(year)}.html"
+        url = f"https://www.sports-reference.com/cbb/schools/{slug}/men/{int(year)}{page}.html"
         try:
             return sr_get_text(url, persist=persist)
         except Exception:

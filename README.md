@@ -83,6 +83,19 @@ stat = weight × this season + (1 − weight) × last season
 
 A team with no previous Division I season uses this season only.
 
+### Strength of schedule
+
+Sports-Reference's SOS is the average rating (SRS) of the Division I opponents a team has played so far. Counting only games played is the right idea: the schedule term corrects the stats a team earned against those opponents. But after two games every team's SRS is itself built from two games, so SOS runs from about −40 to +70. Coastal Carolina's read 41.7.
+
+The script handles this in two steps:
+
+1. Every team's SRS and SOS move toward this season more slowly, with 15 in place of 5: after 2 games this season counts 12%.
+2. For the two teams in a matchup, the script reads their schedules and rebuilds SOS as the average of their opponents' steadier blended SRS. That figure is then blended with last season's SOS like any other stat.
+
+On November 9, 2026, Duke had played Army and Coastal Carolina, two below-average teams, while Coastal Carolina's games included Duke. The rebuilt SOS favors Coastal's schedule, which lowers Duke's margin at home from 30.5 to 25.4.
+
+Kaggle measures schedule strength from opponents' scoring margins, not SRS, so neither step is in the test above.
+
 ### Choosing 5
 
 `training/test_season_blend.py` tried values from 0 (this season only) to never trusting this season. It picked the value on 2016–2021 and then scored 2022–2026, with each season's weights fit only on earlier seasons. Here, unlike the holdout below, games are scored from each team's first game.
