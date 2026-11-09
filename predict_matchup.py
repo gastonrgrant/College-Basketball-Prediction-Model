@@ -794,13 +794,14 @@ def _parse_team_standing(html_text):
     ap_rank = None
     ap_is_final = False
     rank_match = re.search(
-        r"Rank:</strong>\s*(\d+)(?:st|nd|rd|th)?\s+in the\s*(?:<a[^>]*>)?\s*(Final\s+)?AP Poll",
+        r"Rank:</strong>\s*(\d+)(?:st|nd|rd|th)?\s+in the\s*(?:<a[^>]*>)?\s*([^<]*?)\s*AP Poll",
         html_text,
         flags=re.IGNORECASE,
     )
     if rank_match:
         ap_rank = int(rank_match.group(1))
-        ap_is_final = bool(rank_match.group(2))
+        # In-season labels carry the poll date, e.g. "Oct 19th AP Poll".
+        ap_is_final = "final" in rank_match.group(2).lower()
     seed = None
     seed_match = re.search(r"\(#(\d+)\s+seed\b", html_text, flags=re.IGNORECASE)
     if seed_match:
