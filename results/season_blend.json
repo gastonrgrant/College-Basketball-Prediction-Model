@@ -1,0 +1,314 @@
+{
+  "blend": "games / (games + K) on this season, the rest on last season's final stats",
+  "k_chosen_on": [
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021
+  ],
+  "k_grid": [
+    "this season only",
+    "K=1",
+    "K=2",
+    "K=3",
+    "K=5",
+    "K=8",
+    "K=12",
+    "K=20",
+    "K=40",
+    "last season only"
+  ],
+  "chosen_k": 5,
+  "tuning": {
+    "this season only": {
+      "all": {
+        "N": 29849,
+        "WinnerAccuracy": 0.7119166471238567,
+        "MarginMAE": 9.361387711997121
+      },
+      "1-4 games": {
+        "N": 4620,
+        "WinnerAccuracy": 0.7244588744588745,
+        "MarginMAE": 11.345591148344145
+      },
+      "5-9 games": {
+        "N": 5421,
+        "WinnerAccuracy": 0.7470946319867183,
+        "MarginMAE": 9.400678728728712
+      },
+      "10+ games": {
+        "N": 19808,
+        "WinnerAccuracy": 0.6993638933764136,
+        "MarginMAE": 8.887840838126705
+      }
+    },
+    "K=1": {
+      "all": {
+        "N": 29849,
+        "WinnerAccuracy": 0.715266843110322,
+        "MarginMAE": 9.126454056462439
+      },
+      "1-4 games": {
+        "N": 4620,
+        "WinnerAccuracy": 0.7380952380952381,
+        "MarginMAE": 10.14732554312475
+      },
+      "5-9 games": {
+        "N": 5421,
+        "WinnerAccuracy": 0.7493082457111234,
+        "MarginMAE": 9.255050079974612
+      },
+      "10+ games": {
+        "N": 19808,
+        "WinnerAccuracy": 0.7006260096930533,
+        "MarginMAE": 8.853153101704798
+      }
+    },
+    "K=2": {
+      "all": {
+        "N": 29849,
+        "WinnerAccuracy": 0.717276960702201,
+        "MarginMAE": 9.063688963542067
+      },
+      "1-4 games": {
+        "N": 4620,
+        "WinnerAccuracy": 0.7439393939393939,
+        "MarginMAE": 9.900869310534096
+      },
+      "5-9 games": {
+        "N": 5421,
+        "WinnerAccuracy": 0.7515218594355285,
+        "MarginMAE": 9.185706751118149
+      },
+      "10+ games": {
+        "N": 19808,
+        "WinnerAccuracy": 0.7016861873990307,
+        "MarginMAE": 8.835032277882075
+      }
+    },
+    "K=3": {
+      "all": {
+        "N": 29849,
+        "WinnerAccuracy": 0.7189520586954337,
+        "MarginMAE": 9.040331072639837
+      },
+      "1-4 games": {
+        "N": 4620,
+        "WinnerAccuracy": 0.746969696969697,
+        "MarginMAE": 9.821741884036362
+      },
+      "5-9 games": {
+        "N": 5421,
+        "WinnerAccuracy": 0.7529976019184652,
+        "MarginMAE": 9.156659460266347
+      },
+      "10+ games": {
+        "N": 19808,
+        "WinnerAccuracy": 0.7030997576736672,
+        "MarginMAE": 8.826239082637048
+      }
+    },
+    "K=5": {
+      "all": {
+        "N": 29849,
+        "WinnerAccuracy": 0.7176789842205769,
+        "MarginMAE": 9.038727960982268
+      },
+      "1-4 games": {
+        "N": 4620,
+        "WinnerAccuracy": 0.7493506493506493,
+        "MarginMAE": 9.816161040433652
+      },
+      "5-9 games": {
+        "N": 5421,
+        "WinnerAccuracy": 0.7541044087806678,
+        "MarginMAE": 9.157131107915093
+      },
+      "10+ games": {
+        "N": 19808,
+        "WinnerAccuracy": 0.7003231017770598,
+        "MarginMAE": 8.82499591905031
+      }
+    },
+    "K=8": {
+      "all": {
+        "N": 29849,
+        "WinnerAccuracy": 0.717477972461389,
+        "MarginMAE": 9.069094430201998
+      },
+      "1-4 games": {
+        "N": 4620,
+        "WinnerAccuracy": 0.7502164502164502,
+        "MarginMAE": 9.870710140798117
+      },
+      "5-9 games": {
+        "N": 5421,
+        "WinnerAccuracy": 0.7539199409703007,
+        "MarginMAE": 9.209432895039738
+      },
+      "10+ games": {
+        "N": 19808,
+        "WinnerAccuracy": 0.6998687399030694,
+        "MarginMAE": 8.843718854634577
+      }
+    },
+    "K=12": {
+      "all": {
+        "N": 29849,
+        "WinnerAccuracy": 0.7153003450701866,
+        "MarginMAE": 9.122613421214732
+      },
+      "1-4 games": {
+        "N": 4620,
+        "WinnerAccuracy": 0.7491341991341991,
+        "MarginMAE": 9.939627471900563
+      },
+      "5-9 games": {
+        "N": 5421,
+        "WinnerAccuracy": 0.7528131341080981,
+        "MarginMAE": 9.301271319322167
+      },
+      "10+ games": {
+        "N": 19808,
+        "WinnerAccuracy": 0.6971425686591276,
+        "MarginMAE": 8.883159191620175
+      }
+    },
+    "K=20": {
+      "all": {
+        "N": 29849,
+        "WinnerAccuracy": 0.7120171530034507,
+        "MarginMAE": 9.221477729499016
+      },
+      "1-4 games": {
+        "N": 4620,
+        "WinnerAccuracy": 0.7474025974025974,
+        "MarginMAE": 10.03503457700362
+      },
+      "5-9 games": {
+        "N": 5421,
+        "WinnerAccuracy": 0.7458033573141487,
+        "MarginMAE": 9.446101019708156
+      },
+      "10+ games": {
+        "N": 19808,
+        "WinnerAccuracy": 0.694517366720517,
+        "MarginMAE": 8.9702501703464
+      }
+    },
+    "K=40": {
+      "all": {
+        "N": 29849,
+        "WinnerAccuracy": 0.7031726355991825,
+        "MarginMAE": 9.390256226339073
+      },
+      "1-4 games": {
+        "N": 4620,
+        "WinnerAccuracy": 0.7437229437229437,
+        "MarginMAE": 10.155979196231376
+      },
+      "5-9 games": {
+        "N": 5421,
+        "WinnerAccuracy": 0.7397159195720346,
+        "MarginMAE": 9.649924673097699
+      },
+      "10+ games": {
+        "N": 19808,
+        "WinnerAccuracy": 0.6837136510500808,
+        "MarginMAE": 9.140594333630016
+      }
+    },
+    "last season only": {
+      "all": {
+        "N": 29849,
+        "WinnerAccuracy": 0.6799557774129786,
+        "MarginMAE": 9.83015774363024
+      },
+      "1-4 games": {
+        "N": 4620,
+        "WinnerAccuracy": 0.7378787878787879,
+        "MarginMAE": 10.35086766845522
+      },
+      "5-9 games": {
+        "N": 5421,
+        "WinnerAccuracy": 0.7238516878804648,
+        "MarginMAE": 10.028781948648476
+      },
+      "10+ games": {
+        "N": 19808,
+        "WinnerAccuracy": 0.6544325525040388,
+        "MarginMAE": 9.654348895281329
+      }
+    }
+  },
+  "test_2022_2026": {
+    "this season only": {
+      "all": {
+        "N": 27020,
+        "WinnerAccuracy": 0.7046262028127314,
+        "MarginMAE": 9.513053414385906
+      },
+      "1-4 games": {
+        "N": 3864,
+        "WinnerAccuracy": 0.7104037267080745,
+        "MarginMAE": 11.984837982815616
+      },
+      "5-9 games": {
+        "N": 4682,
+        "WinnerAccuracy": 0.730457069628364,
+        "MarginMAE": 9.574934538773798
+      },
+      "10+ games": {
+        "N": 18474,
+        "WinnerAccuracy": 0.696871278553643,
+        "MarginMAE": 8.98037489339443
+      }
+    },
+    "K=5": {
+      "all": {
+        "N": 27020,
+        "WinnerAccuracy": 0.7098445595854922,
+        "MarginMAE": 9.173384673118075
+      },
+      "1-4 games": {
+        "N": 3864,
+        "WinnerAccuracy": 0.7357660455486542,
+        "MarginMAE": 9.980099738169228
+      },
+      "5-9 games": {
+        "N": 4682,
+        "WinnerAccuracy": 0.7308842375053396,
+        "MarginMAE": 9.42911522995276
+      },
+      "10+ games": {
+        "N": 18474,
+        "WinnerAccuracy": 0.699090613835661,
+        "MarginMAE": 8.939841451376296
+      }
+    },
+    "last season only": {
+      "all": {
+        "N": 27020,
+        "WinnerAccuracy": 0.6635085122131754,
+        "MarginMAE": 10.131801367446991
+      },
+      "1-4 games": {
+        "N": 3864,
+        "WinnerAccuracy": 0.7160973084886129,
+        "MarginMAE": 10.564795729832953
+      },
+      "5-9 games": {
+        "N": 4682,
+        "WinnerAccuracy": 0.6990602306706536,
+        "MarginMAE": 10.496702762755163
+      },
+      "10+ games": {
+        "N": 18474,
+        "WinnerAccuracy": 0.6434989715275522,
+        "MarginMAE": 9.948757167539435
+      }
+    }
+  }
+}

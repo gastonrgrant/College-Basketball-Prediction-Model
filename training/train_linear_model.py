@@ -44,8 +44,8 @@ def empty_state():
     }
 
 
-def summarize(state):
-    if state["GP"] < MIN_PRIOR_GAMES:
+def summarize(state, min_games=MIN_PRIOR_GAMES):
+    if state["GP"] < min_games:
         return None
     efg = safe_div(state["FGM"] + 0.5 * state["FG3M"], state["FGA"])
     opp_efg = safe_div(state["Opp_FGM"] + 0.5 * state["Opp_FG3M"], state["Opp_FGA"])
@@ -63,6 +63,7 @@ def summarize(state):
         "ORB": orb, "Opp_ORB": opp_orb, "FTR": ftr, "Opp_FTR": opp_ftr,
         "SOS": 0.0 if np.isnan(sos) else sos,
         "Margin": safe_div(state["Margin"], state["GP"]),
+        "GP": state["GP"],
     }
 
 
@@ -98,7 +99,12 @@ def location_for_a(row, a_is_winner):
     return winner_home if a_is_winner else -winner_home
 
 
-def build_rows():
+def build_rows(min_games=MIN_PRIOR_GAMES, return_final=False):
+    """Pre-game rows for games where both teams have min_games played.
+
+    With return_final, also return each team's end-of-season profile keyed by
+    (season, team id).
+    """
     reg = pd.read_csv(DATA_DIR / "MRegularSeasonDetailedResults.csv")
     tour = pd.read_csv(DATA_DIR / "MNCAATourneyDetailedResults.csv")
     reg["IsTourney"] = 0
@@ -115,12 +121,14 @@ def build_rows():
         a_won = int(team_a == winner)
         state_a = states.setdefault((season, team_a), empty_state())
         state_b = states.setdefault((season, team_b), empty_state())
-        profile_a = summarize(state_a)
-        profile_b = summarize(state_b)
+        profile_a = summarize(state_a, min_games)
+        profile_b = summarize(state_b, min_games)
         if profile_a and profile_b:
             margin = (float(game.WScore) - float(game.LScore)) if a_won else (float(game.LScore) - float(game.WScore))
             rows.append({
                 "Season": season,
+                "A_ID": team_a,
+                "B_ID": team_b,
                 "DayNum": int(game.DayNum),
                 "IsTourney": int(game.IsTourney),
                 "A_Won": a_won,
@@ -148,7 +156,23 @@ def build_rows():
         add_game(states[(season, loser)], pack(game, "L"), pack(game, "W"))
         if len(rows) and len(rows) % 25000 == 0:
             print(f"  {len(rows)} usable games so far", flush=True)
-    frame = pd.DataFrame(rows)
+    frame = add_features(pd.DataFrame(rows))
+    print(
+        f"Built {len(frame)} games. SOS std median {frame.groupby('Season')['SOS_Std'].first().median():.2f}. "
+        f"A_SOS range {frame['A_SOS'].quantile(0.05):.1f} to {frame['A_SOS'].quantile(0.95):.1f}."
+    )
+    if return_final:
+        final = {}
+        for key, state in states.items():
+            profile = summarize(state, 1)
+            if profile:
+                final[key] = profile
+        return frame, final
+    return frame
+
+
+def add_features(frame):
+    """Matchup features from the A_ and B_ team rate columns."""
     sos_std = {}
     for season, group in frame.groupby("Season"):
         pooled = np.concatenate([group["A_SOS"].to_numpy(), group["B_SOS"].to_numpy()])
@@ -167,10 +191,6 @@ def build_rows():
     frame["Def_ORB"] = frame["B_Opp_ORB"] - frame["A_Opp_ORB"]
     frame["FTR_Diff"] = frame["A_FTR"] - frame["B_FTR"]
     frame["Def_FTR"] = frame["B_Opp_FTR"] - frame["A_Opp_FTR"]
-    print(
-        f"Built {len(frame)} games. SOS std median {np.median(list(sos_std.values())):.2f}. "
-        f"A_SOS range {frame['A_SOS'].quantile(0.05):.1f} to {frame['A_SOS'].quantile(0.95):.1f}."
-    )
     return frame
 
 

@@ -9,6 +9,8 @@ from functools import lru_cache
 from datetime import date
 from io import StringIO
 from pathlib import Path
+import hashlib
+import time
 
 
 # =========================================================
@@ -34,6 +36,18 @@ TRAINING_START_SEASON = 2003
 TRAINING_END_SEASON = 2026
 ACTIVE_SEASON_YEAR = None
 DATA_SOURCE_URL = None
+
+# Each stat is games / (games + K) this season and the rest last season.
+# K = 5 was chosen on 2016-2021 and tested on 2022-2026 (training/test_season_blend.py).
+SEASON_BLEND_K = 5.0
+CURRENT_RAW_DF = None
+PRIOR_SEASON_DF = None
+BLEND_NOTES = {}
+
+# Sports-Reference blocks clients that make more than about 20 requests a minute.
+SR_REQUEST_GAP_SECONDS = 3.1
+_SR_LAST_REQUEST = [0.0]
+CACHE_DIR = Path(__file__).resolve().parent / ".cache"
 
 
 def infer_current_ncaa_season(today=None):
@@ -188,11 +202,32 @@ def convert_numeric(df: pd.DataFrame, exclude=None) -> pd.DataFrame:
                 pass
     return df
 
-def scrape_table(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers, timeout=10)
+def sr_get_text(url, persist=False, cache_key=None):
+    """Fetch a Sports-Reference page, spaced out to stay under their rate limit.
 
-    soup = BeautifulSoup(res.text, "lxml")
+    persist keeps the page in .cache/ for pages that no longer change, such as
+    a finished season. cache_key separates copies of a page that keeps growing.
+    """
+    cached = CACHE_DIR / f"{hashlib.sha1((cache_key or url).encode()).hexdigest()}.html"
+    if persist and cached.exists():
+        return cached.read_text()
+    wait = SR_REQUEST_GAP_SECONDS - (time.monotonic() - _SR_LAST_REQUEST[0])
+    if wait > 0:
+        time.sleep(wait)
+    try:
+        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    finally:
+        _SR_LAST_REQUEST[0] = time.monotonic()
+    if res.status_code != 200:
+        raise ValueError(f"HTTP {res.status_code} at {url}")
+    if persist:
+        CACHE_DIR.mkdir(exist_ok=True)
+        cached.write_text(res.text)
+    return res.text
+
+
+def scrape_table(url, persist=False):
+    soup = BeautifulSoup(sr_get_text(url, persist=persist), "lxml")
 
     tables = []
 
@@ -223,46 +258,55 @@ def scrape_table(url):
 # LOAD + MERGE
 # =========================================================
 
+def scrape_season_tables(season_year, persist=False):
+    """Return the four Sports-Reference season tables once games have been played."""
+    urls = build_live_urls(season_year)
+    tables = [
+        scrape_table(urls[key], persist=persist)
+        for key in ("team_basic", "opp_basic", "team_adv", "opp_adv")
+    ]
+    # A real Division-I season table should contain many teams. This
+    # avoids accepting an empty/placeholder upcoming-season page.
+    if min(len(table) for table in tables) < 50:
+        raise ValueError("season tables are not populated yet")
+    # Before opening night the page lists every school with blank stats.
+    team_basic = tables[0]
+    if "G" not in team_basic.columns:
+        raise ValueError("season table has no games column")
+    played = pd.to_numeric(team_basic["G"], errors="coerce")
+    if int((played > 0).sum()) < 50:
+        raise ValueError("no games have been played yet")
+    return tables, urls["team_basic"]
+
+
 def load_and_prepare_data(team_basic_csv, opp_basic_csv, team_adv_csv, opp_adv_csv):
-    global ACTIVE_SEASON_YEAR, DATA_SOURCE_URL
+    global ACTIVE_SEASON_YEAR, DATA_SOURCE_URL, CURRENT_RAW_DF, PRIOR_SEASON_DF
 
     live_error_messages = []
-    loaded_live = False
+    tables = None
 
     # Try the season appropriate for today's date first. During the summer,
     # Sports-Reference may not have the upcoming season page yet, so try the
     # previous season automatically before using local CSVs.
     for season_year in live_season_candidates():
-        urls = build_live_urls(season_year)
         try:
-            team_basic = scrape_table(urls["team_basic"])
-            opp_basic = scrape_table(urls["opp_basic"])
-            team_adv = scrape_table(urls["team_adv"])
-            opp_adv = scrape_table(urls["opp_adv"])
-
-            # A real Division-I season table should contain many teams. This
-            # avoids accepting an empty/placeholder upcoming-season page.
-            if min(len(team_basic), len(opp_basic), len(team_adv), len(opp_adv)) < 50:
-                raise ValueError("season tables are not populated yet")
-            # Before opening night the page lists every school with blank stats.
-            if "G" not in team_basic.columns:
-                raise ValueError("season table has no games column")
-            played = pd.to_numeric(team_basic["G"], errors="coerce")
-            if int((played > 0).sum()) < 50:
-                raise ValueError("no games have been played yet")
-
-            ACTIVE_SEASON_YEAR = int(season_year)
-            DATA_SOURCE_URL = urls["team_basic"]
-            loaded_live = True
-            print(
-                f"Using LIVE Sports-Reference {ACTIVE_SEASON_YEAR} season data "
-                f"(retrieved {date.today().isoformat()}).\n"
-            )
-            break
+            tables, source_url = scrape_season_tables(season_year)
         except Exception as exc:
             live_error_messages.append(f"{season_year}: {exc}")
+            continue
+        ACTIVE_SEASON_YEAR = int(season_year)
+        DATA_SOURCE_URL = source_url
+        for message in live_error_messages:
+            print(f"Skipped {message}.")
+        print(
+            f"Using LIVE Sports-Reference {ACTIVE_SEASON_YEAR} season data "
+            f"(retrieved {date.today().isoformat()})."
+        )
+        break
 
-    if not loaded_live:
+    CURRENT_RAW_DF = None
+    PRIOR_SEASON_DF = None
+    if tables is None:
         ACTIVE_SEASON_YEAR = None
         DATA_SOURCE_URL = None
         print("Live scrape failed — falling back to local CSV files.")
@@ -272,12 +316,61 @@ def load_and_prepare_data(team_basic_csv, opp_basic_csv, team_adv_csv, opp_adv_c
             "WARNING: local CSVs may be stale. For a current prediction, "
             "verify they were downloaded for the current season.\n"
         )
-        team_basic = pd.read_csv(team_basic_csv)
-        opp_basic = pd.read_csv(opp_basic_csv)
-        team_adv = pd.read_csv(team_adv_csv)
-        opp_adv = pd.read_csv(opp_adv_csv)
+        tables = [pd.read_csv(path) for path in (team_basic_csv, opp_basic_csv, team_adv_csv, opp_adv_csv)]
+        return prepare_season_tables(*tables)
 
+    full_df, tourney_df = prepare_season_tables(*tables)
+    CURRENT_RAW_DF = full_df.copy()
+    try:
+        prior_tables, _ = scrape_season_tables(ACTIVE_SEASON_YEAR - 1, persist=True)
+        PRIOR_SEASON_DF, _ = prepare_season_tables(*prior_tables)
+    except Exception as exc:
+        print(f"Could not load the {ACTIVE_SEASON_YEAR - 1} season to blend with: {exc}")
+    if PRIOR_SEASON_DF is not None and "G" in full_df.columns:
+        full_df = blend_with_prior_season(full_df, PRIOR_SEASON_DF)
+        typical = float(full_df["G"].median())
+        weight = typical / (typical + SEASON_BLEND_K)
+        print(
+            f"Blending with the {_season_name(ACTIVE_SEASON_YEAR - 1)} season: "
+            f"the typical team has played {typical:.0f} games, so this season counts "
+            f"{weight:.0%} and last season {1 - weight:.0%}."
+        )
+    print()
+    tourney_df = full_df[full_df["Is_Tourney_Team"]].copy()
+    return full_df, tourney_df
+
+
+def blend_columns(full_df, prior_df):
+    numeric = full_df.select_dtypes(include=[np.number]).columns
+    return [col for col in numeric if col in prior_df.columns and col != "G"]
+
+
+def season_weight(games):
+    games = 0.0 if pd.isna(games) else float(games)
+    return games / (games + SEASON_BLEND_K)
+
+
+def blend_with_prior_season(full_df, prior_df):
+    """Blend every team's stats with its own final stats from last season."""
+    cols = blend_columns(full_df, prior_df)
+    prior = prior_df.drop_duplicates("Team").set_index("Team").reindex(full_df["Team"])
+    current = full_df[cols].to_numpy(dtype=float)
+    last = prior[cols].to_numpy(dtype=float)
+    current, last = np.where(np.isnan(current), last, current), np.where(np.isnan(last), current, last)
+    weight = full_df["G"].map(season_weight).to_numpy()[:, None]
+    out = full_df.copy()
+    out[cols] = weight * current + (1.0 - weight) * last
+    return out
+
+
+def prepare_season_tables(team_basic, opp_basic, team_adv, opp_adv):
     team_basic = clean_sportsref_df(team_basic)
+    games_played = None
+    if "G" in team_basic.columns:
+        games_played = pd.DataFrame({
+            "Team": team_basic["Team"],
+            "G": pd.to_numeric(team_basic["G"], errors="coerce"),
+        }).drop_duplicates("Team")
     opp_basic = clean_sportsref_df(opp_basic)
     team_adv = clean_sportsref_df(team_adv)
     opp_adv = clean_sportsref_df(opp_adv)
@@ -367,6 +460,8 @@ def load_and_prepare_data(team_basic_csv, opp_basic_csv, team_adv_csv, opp_adv_c
 
     # Remove exact duplicates if any
     merged = merged.drop_duplicates(subset=["Team"]).reset_index(drop=True)
+    if games_played is not None:
+        merged = merged.merge(games_played, on="Team", how="left")
 
     # Canonical lookup key
     merged["LookupKey"] = merged["Team"].apply(canonical_lookup_name)
@@ -375,6 +470,236 @@ def load_and_prepare_data(team_basic_csv, opp_basic_csv, team_adv_csv, opp_adv_c
     tourney_df = merged[merged["Is_Tourney_Team"]].copy()
 
     return full_df, tourney_df
+
+
+# =========================================================
+# ROSTER STARTING POINT
+# =========================================================
+# Last season's team stats, adjusted for the players in this season's rotation.
+# Transfers bring their own stats from their old school. This adjustment is not
+# in the Kaggle test, because Kaggle has no player-level data.
+
+PLAYER_COUNT_STATS = ("mp", "fg", "fga", "fg3", "ft", "fta", "orb", "tov")
+OFFENSE_ROSTER_COLUMNS = (("eFG%", "efg"), ("TOV%", "tov"), ("ORB%", "orb"), ("FT/FGA", "ftr"))
+DEFENSE_ROSTER_COLUMNS = ("Opp_eFG%", "Opp_TOV%", "Opp_ORB%", "Opp_FT/FGA")
+
+
+def _find_table(soup, table_id):
+    table = soup.find("table", id=table_id)
+    if table is not None:
+        return table
+    for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
+        if f'id="{table_id}"' in comment:
+            return BeautifulSoup(comment, "lxml").find("table", id=table_id)
+    return None
+
+
+def _cell_number(cell):
+    text = cell.text.strip() if cell is not None else ""
+    try:
+        return float(text) if text else 0.0
+    except ValueError:
+        return 0.0
+
+
+def _player_lines(soup, table_id, stats):
+    """{player page link: line} from a team page's player table."""
+    table = _find_table(soup, table_id)
+    lines = {}
+    if table is None or table.find("tbody") is None:
+        return lines
+    for row in table.find("tbody").find_all("tr"):
+        link = row.find("a", href=re.compile(r"^/cbb/players/"))
+        if link is None:
+            continue
+        line = {stat: _cell_number(row.find(attrs={"data-stat": stat})) for stat in stats}
+        line["name"] = link.text.strip()
+        lines[link["href"]] = line
+    return lines
+
+
+def _season_label(year):
+    return f"{int(year) - 1}-{str(int(year))[-2:]}"
+
+
+def player_previous_season(href, year):
+    """A player's totals for the season before year, and the school he played for."""
+    label = _season_label(int(year) - 1)
+    try:
+        page = sr_get_text(
+            f"https://www.sports-reference.com{href}",
+            persist=True,
+            cache_key=f"{href}|{label}",
+        )
+    except Exception:
+        return None
+    soup = BeautifulSoup(page, "lxml")
+    totals = _find_table(soup, "players_totals")
+    if totals is None or totals.find("tbody") is None:
+        return None
+    line = {stat: 0.0 for stat in PLAYER_COUNT_STATS}
+    schools = {}
+    for row in totals.find("tbody").find_all("tr"):
+        season = row.find(attrs={"data-stat": "year_id"})
+        if season is None or season.text.strip() != label:
+            continue
+        for stat in PLAYER_COUNT_STATS:
+            line[stat] += _cell_number(row.find(attrs={"data-stat": stat}))
+        school = row.find(attrs={"data-stat": "team_name_abbr"})
+        if school is not None:
+            name = school.text.strip()
+            schools[name] = schools.get(name, 0.0) + _cell_number(row.find(attrs={"data-stat": "mp"}))
+    if line["mp"] <= 0:
+        return None
+    orb_total = orb_minutes = 0.0
+    advanced = _find_table(soup, "players_advanced")
+    if advanced is not None and advanced.find("tbody") is not None:
+        for row in advanced.find("tbody").find_all("tr"):
+            season = row.find(attrs={"data-stat": "year_id"})
+            if season is None or season.text.strip() != label:
+                continue
+            minutes = _cell_number(row.find(attrs={"data-stat": "mp"}))
+            orb_total += minutes * _cell_number(row.find(attrs={"data-stat": "orb_pct"}))
+            orb_minutes += minutes
+    line["orb_pct"] = orb_total / orb_minutes if orb_minutes else np.nan
+    line["school"] = max(schools, key=schools.get) if schools else None
+    return line
+
+
+def _lineup_rates(entries):
+    """Team rates, as fractions, from (minutes weight, season line) pairs."""
+    entries = [(weight, line) for weight, line in entries if weight > 0 and line["mp"] > 0]
+    if not entries:
+        return None
+    sums = {
+        stat: sum(weight * line[stat] / line["mp"] for weight, line in entries)
+        for stat in ("fg", "fga", "fg3", "ft", "fta", "orb", "tov")
+    }
+    if sums["fga"] <= 0:
+        return None
+    rebounders = [(weight, line["orb_pct"]) for weight, line in entries if not np.isnan(line["orb_pct"])]
+    rebound_weight = sum(weight for weight, _ in rebounders)
+    # Player ORB% is his share of available rebounds while on the floor; five play at once.
+    orb = 5.0 * sum(weight * value for weight, value in rebounders) / rebound_weight / 100.0 if rebound_weight else np.nan
+    return {
+        "efg": (sums["fg"] + 0.5 * sums["fg3"]) / sums["fga"],
+        "tov": sums["tov"] / (sums["fga"] + 0.44 * sums["fta"] + sums["tov"]),
+        "ftr": sums["ft"] / sums["fga"],
+        "orb": orb,
+    }
+
+
+def _prior_team_row(prior_df, school):
+    if not school:
+        return None
+    match = prior_df.loc[prior_df["LookupKey"] == canonical_lookup_name(school)]
+    return match.iloc[0] if not match.empty else None
+
+
+def roster_starting_point(team, prior_df):
+    """Last season's stats for team, adjusted for this season's rotation.
+
+    Offense moves by how differently this season's players shot, protected the
+    ball, rebounded, and drew fouls last season. Defense averages the defenses
+    those players were on last season. Players with no previous season count as
+    unchanged from the team's last season.
+    """
+    year = ACTIVE_SEASON_YEAR
+    prior = _prior_team_row(prior_df, team)
+    if year is None or prior is None:
+        return None
+    now_page = team_page_html(team, year)
+    last_page = team_page_html(team, int(year) - 1)
+    if now_page is None or last_page is None:
+        return None
+    playing = _player_lines(BeautifulSoup(now_page, "lxml"), "players_totals", ("mp",))
+    last_soup = BeautifulSoup(last_page, "lxml")
+    last_lines = _player_lines(last_soup, "players_totals", PLAYER_COUNT_STATS)
+    last_advanced = _player_lines(last_soup, "players_advanced", ("mp", "orb_pct"))
+    for href, line in last_lines.items():
+        advanced = last_advanced.get(href)
+        line["orb_pct"] = advanced["orb_pct"] if advanced and advanced["mp"] > 0 else np.nan
+        line["school"] = team
+
+    minutes_now = sum(line["mp"] for line in playing.values())
+    baseline = _lineup_rates([(line["mp"], line) for line in last_lines.values()])
+    if minutes_now <= 0 or baseline is None:
+        return None
+
+    covered, defenses, transfers = [], [], []
+    for href, line in playing.items():
+        if line["mp"] <= 0:
+            continue
+        history = last_lines.get(href)
+        if history is None:
+            history = player_previous_season(href, year)
+        school_row = prior
+        if history is not None:
+            covered.append((line["mp"], history))
+            if history["school"] and canonical_lookup_name(history["school"]) != canonical_lookup_name(team):
+                transfers.append((line["name"], history["school"], line["mp"] / minutes_now))
+                school_row = _prior_team_row(prior_df, history["school"])
+                if school_row is None:
+                    school_row = prior
+        defenses.append((line["mp"], school_row))
+
+    covered_share = sum(weight for weight, _ in covered) / minutes_now
+    lineup = _lineup_rates(covered)
+    values = {}
+    for col, key in OFFENSE_ROSTER_COLUMNS:
+        if lineup is None or col not in prior.index or pd.isna(prior[col]):
+            continue
+        if np.isnan(lineup[key]) or np.isnan(baseline[key]):
+            continue
+        change = covered_share * (lineup[key] - baseline[key])
+        scale = 100.0 if abs(float(prior[col])) > 1.5 else 1.0
+        values[col] = float(prior[col]) + change * scale
+    total = sum(weight for weight, _ in defenses)
+    for col in DEFENSE_ROSTER_COLUMNS:
+        if col in prior.index and total > 0:
+            values[col] = sum(weight * float(row[col]) for weight, row in defenses) / total
+    return {"values": values, "transfers": transfers, "covered_share": covered_share}
+
+
+def apply_roster_starting_point(full_df, team):
+    """Re-blend team's Four Factors against its roster-adjusted last season."""
+    if team in BLEND_NOTES or CURRENT_RAW_DF is None or PRIOR_SEASON_DF is None:
+        return
+    raw = CURRENT_RAW_DF.loc[CURRENT_RAW_DF["Team"] == team]
+    rows = full_df.index[full_df["Team"] == team]
+    if raw.empty or len(rows) == 0 or "G" not in raw.columns:
+        return
+    raw = raw.iloc[0]
+    has_prior = _prior_team_row(PRIOR_SEASON_DF, team) is not None
+    weight = season_weight(raw["G"]) if has_prior else 1.0
+    note = {"games": raw["G"], "weight": weight, "has_prior": has_prior, "transfers": []}
+    start = roster_starting_point(team, PRIOR_SEASON_DF) if has_prior and weight < 1.0 else None
+    if start:
+        for col, value in start["values"].items():
+            current = raw[col] if col in raw.index and pd.notna(raw[col]) else value
+            full_df.loc[rows, col] = weight * float(current) + (1.0 - weight) * value
+        note["transfers"] = start["transfers"]
+        note["covered_share"] = start["covered_share"]
+    BLEND_NOTES[team] = note
+
+
+def blend_note(team):
+    """One sentence on how much of team's numbers come from this season."""
+    note = BLEND_NOTES.get(team)
+    if not note or ACTIVE_SEASON_YEAR is None:
+        return ""
+    if not note["has_prior"]:
+        return f"{team} has no previous Division I season, so its numbers are this season only."
+    games = 0 if pd.isna(note["games"]) else int(note["games"])
+    text = (
+        f"{team} has played {games} game{'s' if games != 1 else ''}, so this season counts "
+        f"{note['weight']:.0%} and last season {1 - note['weight']:.0%}."
+    )
+    transfers = sorted(note["transfers"], key=lambda item: item[2], reverse=True)
+    if transfers:
+        names = ", ".join(f"{name} ({school})" for name, school, _ in transfers[:3])
+        text += f" Last season's numbers include transfers {names}."
+    return text
 
 
 # =========================================================
@@ -483,48 +808,63 @@ def _parse_team_standing(html_text):
     return {"ap_rank": ap_rank, "ap_is_final": ap_is_final, "seed": seed}
 
 
+TEAM_SLUG_MAP = {
+    "UCF": "central-florida",
+    "USC": "southern-california",
+    "Ole Miss": "mississippi",
+    "UConn": "connecticut",
+    "BYU": "brigham-young",
+    "SMU": "southern-methodist",
+    "LSU": "louisiana-state",
+    "UNLV": "nevada-las-vegas",
+    "UTEP": "texas-el-paso",
+    "UTSA": "texas-san-antonio",
+    "UAB": "alabama-birmingham",
+    "St. John's": "st-johns-ny",
+    "St John's": "st-johns-ny",
+    "VCU": "virginia-commonwealth",
+}
+
+
+def build_team_slug(name):
+    if name in TEAM_SLUG_MAP:
+        return TEAM_SLUG_MAP[name]
+    name = name.lower()
+    name = name.replace("&", "and")
+    name = re.sub(r"[.\']", "", name)
+    name = re.sub(r"[^a-z0-9]+", "-", name).strip("-")
+    return name
+
+
+@lru_cache(maxsize=None)
+def team_page_html(team_name, year):
+    """Sports-Reference team season page, or None if no slug matches."""
+    persist = ACTIVE_SEASON_YEAR is not None and int(year) < int(ACTIVE_SEASON_YEAR)
+    names = [
+        team_name,
+        team_name.replace("UCF", "Central Florida"),
+        team_name.replace("USC", "Southern California"),
+        team_name.replace("Ole Miss", "Mississippi"),
+    ]
+    tried = set()
+    for name in names:
+        slug = build_team_slug(name)
+        if slug in tried:
+            continue
+        tried.add(slug)
+        url = f"https://www.sports-reference.com/cbb/schools/{slug}/men/{int(year)}.html"
+        try:
+            return sr_get_text(url, persist=persist)
+        except Exception:
+            continue
+    return None
+
+
 @lru_cache(maxsize=None)
 def get_team_physical_profile(team_name, year=None, min_mp=10.0):
     # Use the same live season as the team-stat model unless explicitly forced.
     if year is None:
         year = ACTIVE_SEASON_YEAR or infer_current_ncaa_season()
-
-    TEAM_SLUG_MAP = {
-        "UCF": "central-florida",
-        "USC": "southern-california",
-        "Ole Miss": "mississippi",
-        "UConn": "connecticut",
-        "BYU": "brigham-young",
-        "SMU": "southern-methodist",
-        "LSU": "louisiana-state",
-        "UNLV": "nevada-las-vegas",
-        "UTEP": "texas-el-paso",
-        "UTSA": "texas-san-antonio",
-        "UAB": "alabama-birmingham",
-        "St. John's": "st-johns-ny",
-        "St John's": "st-johns-ny",
-        "VCU": "virginia-commonwealth",
-    }
-
-    def build_slug(name):
-        if name in TEAM_SLUG_MAP:
-            return TEAM_SLUG_MAP[name]
-
-        name = name.lower()
-        name = name.replace("&", "and")
-        name = re.sub(r"[.\']", "", name)
-        name = re.sub(r"[^a-z0-9]+", "-", name).strip("-")
-        return name
-
-    def try_fetch(slug):
-        url = f"https://www.sports-reference.com/cbb/schools/{slug}/men/{year}.html"
-        try:
-            res = requests.get(url, timeout=10)
-            if res.status_code == 200:
-                return res
-        except:
-            pass
-        return None
 
     # 🔥 FIXED NAME CLEANING (handles Jr, Sr, etc.)
     def clean_name(n):
@@ -532,38 +872,13 @@ def get_team_physical_profile(team_name, year=None, min_mp=10.0):
         n = re.sub(r"\b(Jr|Sr|II|III|IV)\b\.?", "", n)
         return n.strip()
 
-    def try_fetch(slug):
-        url = f"https://www.sports-reference.com/cbb/schools/{slug}/men/{year}.html"
-        try:
-            res = requests.get(url, timeout=10)
-            if res.status_code == 200:
-                return res
-        except:
-            pass
+    page = team_page_html(team_name, year)
+    if page is None:
         return None
 
-    # Fetch page
-    slug = build_slug(team_name)
-    res = try_fetch(slug)
+    _TEAM_STANDINGS[_standing_key(team_name)] = _parse_team_standing(page)
 
-    if res is None:
-        fallback_names = [
-            team_name.replace("UCF", "Central Florida"),
-            team_name.replace("USC", "Southern California"),
-            team_name.replace("Ole Miss", "Mississippi"),
-        ]
-        for alt in fallback_names:
-            slug = build_slug(alt)
-            res = try_fetch(slug)
-            if res:
-                break
-
-    if res is None:
-        return None
-
-    _TEAM_STANDINGS[_standing_key(team_name)] = _parse_team_standing(res.text)
-
-    soup = BeautifulSoup(res.content, "lxml")
+    soup = BeautifulSoup(page, "lxml")
 
     # Extract tables (including commented)
     all_tables = []
@@ -2641,11 +2956,15 @@ def build_matchup_page(team_a, team_b, result, commentary, profile_a, profile_b,
     favored_by = f"{result['winner']} is favored by {float(result['projected_margin']):.1f} points."
     winner_chance = f"{result['winner']} wins {float(result['win_prob']) * 100:.1f}% of the time in the model."
     home_court_line = _home_court_sentence(result, team_a, team_b)
+    blend_lines = "".join(
+        f'<p class="meta">{_esc(line)}</p>' for line in (blend_note(team_a), blend_note(team_b)) if line
+    )
     body = f"""
     <header class="top">
       <div>
         <p class="kicker">Matchup report</p>
         <p class="meta">{_esc(_season_line())}</p>
+        {blend_lines}
       </div>
       <p class="meta">Season offense and defense, weighted by past games</p>
     </header>
@@ -2830,6 +3149,14 @@ def main():
             # 🔥 FIX TEAM NAME MATCHING (you already wrote this function)
             team_a = find_team_name(team_a, full_df)
             team_b = find_team_name(team_b, full_df)
+            added = [team for team in (team_a, team_b) if team not in BLEND_NOTES]
+            for team in added:
+                apply_roster_starting_point(full_df, team)
+            if added:
+                baselines, percentile_tables = build_baselines(full_df)
+            for team in (team_a, team_b):
+                if blend_note(team):
+                    print(blend_note(team))
             location = ask_site(team_a, team_b)
             played_at = venue_line(location, team_a, team_b)
 

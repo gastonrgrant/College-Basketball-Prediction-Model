@@ -27,10 +27,12 @@ training/
   train_linear_model.py         Fit and test the V5 weights on Kaggle history.
   train_xgboost.py              Same test with XGBoost, for comparison.
   compare_start_dates.py        Score V5 on games after different dates in the season.
+  test_season_blend.py          Choose how fast this season replaces last season.
 results/
   linear_model.json             V5 weights and year-by-year test scores.
   xgboost_comparison.json       XGBoost test scores.
   start_date_comparison.json    Scores by start date.
+  season_blend.json             Scores for each blend setting.
 archive/                        Earlier versions (V2, V4.1, V4.2) and their results.
 ```
 
@@ -55,9 +57,59 @@ Choice [3]:
 
 Enter `1`, `2`, `3`, a team name, or press Enter for a neutral site. A home game names that school's arena and city on the report. A neutral game says "Neutral site" and does not invent a building.
 
-From July through December the loader tries the upcoming season, then falls back to the latest season Sports-Reference has published. On October 21, 2026 that is the completed 2025–26 season. Leave `SEASON_OVERRIDE` as `None` unless you want to force a year.
+From July through December the loader tries the upcoming season, then falls back to the latest season Sports-Reference has published. Leave `SEASON_OVERRIDE` as `None` unless you want to force a year.
+
+Early in a season, each team's stats are blended with last season. See [Early season](#early-season).
 
 If the live pages fail, the script falls back to local CSV files and says so.
+
+## Early season
+
+Two games of stats are mostly noise. Each stat the model uses is a mix of this season and last season:
+
+```text
+this-season weight = games played / (games played + 5)
+stat = weight × this season + (1 − weight) × last season
+```
+
+| Games played | This season | Last season |
+|---:|---:|---:|
+| 0 | 0% | 100% |
+| 2 | 29% | 71% |
+| 5 | 50% | 50% |
+| 10 | 67% | 33% |
+| 20 | 80% | 20% |
+| 35 | 88% | 12% |
+
+A team with no previous Division I season uses this season only.
+
+### Choosing 5
+
+`training/test_season_blend.py` tried values from 0 (this season only) to never trusting this season. It picked the value on 2016–2021 and then scored 2022–2026, with each season's weights fit only on earlier seasons. Here, unlike the holdout below, games are scored from each team's first game.
+
+| Setting | All games | Teams with 1–4 games | 5–9 games | 10 or more |
+|---|---:|---:|---:|---:|
+| This season only | 70.5% / 9.51 | 71.0% / 11.98 | 73.0% / 9.57 | 69.7% / 8.98 |
+| **Blend, 5** | **71.0% / 9.17** | **73.6% / 9.98** | **73.1% / 9.43** | **69.9% / 8.94** |
+| Last season only | 66.4% / 10.13 | | | |
+
+Each cell is winners picked, then average margin miss. The pool is 27,020 games. The blend wins in every group. It helps most in the first four games, where the average miss falls by 2 points. Results are in `results/season_blend.json`.
+
+### Roster changes and transfers
+
+Last season's team stats describe last season's roster. For the two teams in a matchup, the script adjusts last season before blending:
+
+1. It reads who has played minutes this season.
+2. A returning player's line comes from last season's team page. A transfer's line comes from his own player page, at his old school.
+3. Offense moves by how differently this season's players shot, protected the ball, rebounded, and drew fouls last season, weighted by this season's minutes.
+4. Defense is the minutes-weighted average of the team defenses those players were on last season. A transfer brings his old team's defense.
+5. A freshman, or anyone without a previous college season, counts as unchanged from his team's last season.
+
+John Blackwell's 2025–26 season at Wisconsin counts toward Duke's starting point. Returning-minutes counts would treat him like a freshman. The report and the console say how much each team's numbers come from this season, and name its main transfers.
+
+Kaggle has no player data, so this roster step is not in the test above. The blend itself is tested. The roster step only changes last season's side of the blend, so it fades as games are played: by 20 games it is a fifth of each stat.
+
+These page reads make the first matchup slow, about a minute and a half, because Sports-Reference allows about 20 requests a minute. Finished-season pages are saved in `.cache/` and are not fetched again.
 
 ## What the margin is
 
@@ -235,7 +287,8 @@ The trees lost on both overall numbers, so V5 stays linear. The same trainer wit
 | Strength of schedule | Yes |
 | Net rating, 3-point attempt rate, pace | No |
 | AP rank, NCAA seed | No. Seeds and ranks label the report and can mark an upset. |
-| Roster, height, points per game | No. Shown on the report. |
+| Who is on the roster | Early in the season, through last season's side of the blend |
+| Height, points per game | No. Shown on the report. |
 | Arena and city | No. Shown when a home team is chosen. |
 
 An upset label needs a real ranking gap: an unranked team over a ranked team, an AP gap of 10 or more, a seed gap of 3 or more, or an unseeded team over a seeded team. Two 1 seeds are not an upset.
@@ -243,6 +296,8 @@ An upset label needs a real ranking gap: an unranked team over a ranked team, an
 ## Limits
 
 Season rates include every game already played. An injury, a rest day, or a recent slump is not a separate adjustment.
+
+The roster adjustment is untested, and it only applies to the two teams in the matchup. Freshmen count as average for their team. A transfer's defense is his old team's defense.
 
 The margin is capped at ±35. A hypothetical neutral game has no arena, because there is no specific building to look up. Home arenas come from Wikipedia and can miss a school.
 
