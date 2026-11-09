@@ -1,0 +1,450 @@
+{
+  "model": "xgboost",
+  "features": [
+    "eFG_Diff",
+    "Def_eFG",
+    "TOV_Diff",
+    "Def_TOV",
+    "ORB_Diff",
+    "Def_ORB",
+    "FTR_Diff",
+    "Def_FTR",
+    "SOS_ZDiff",
+    "Location"
+  ],
+  "settings_chosen_on": "tree shape on 2021; tree count early-stopped on the season before each test year",
+  "monotone_constraints": "increasing on every feature",
+  "frozen_settings": {
+    "max_depth": 6,
+    "learning_rate": 0.05,
+    "min_child_weight": 100,
+    "reg_lambda": 10.0
+  },
+  "tuning_trials": [
+    {
+      "max_depth": 3,
+      "learning_rate": 0.05,
+      "min_child_weight": 25,
+      "reg_lambda": 1.0,
+      "n_estimators": 208,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6766550522648084,
+        "MarginMAE": 9.50193832944819,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6212121212121212,
+        "TourneyMarginMAE": 11.305859791058483
+      }
+    },
+    {
+      "max_depth": 3,
+      "learning_rate": 0.05,
+      "min_child_weight": 25,
+      "reg_lambda": 10.0,
+      "n_estimators": 233,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.675609756097561,
+        "MarginMAE": 9.498903387510753,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6060606060606061,
+        "TourneyMarginMAE": 11.324464873890534
+      }
+    },
+    {
+      "max_depth": 3,
+      "learning_rate": 0.05,
+      "min_child_weight": 100,
+      "reg_lambda": 1.0,
+      "n_estimators": 236,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6766550522648084,
+        "MarginMAE": 9.503931193722197,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6212121212121212,
+        "TourneyMarginMAE": 11.293872392087271
+      }
+    },
+    {
+      "max_depth": 3,
+      "learning_rate": 0.05,
+      "min_child_weight": 100,
+      "reg_lambda": 10.0,
+      "n_estimators": 207,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6780487804878049,
+        "MarginMAE": 9.497868646258157,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6212121212121212,
+        "TourneyMarginMAE": 11.343631570989436
+      }
+    },
+    {
+      "max_depth": 3,
+      "learning_rate": 0.1,
+      "min_child_weight": 25,
+      "reg_lambda": 1.0,
+      "n_estimators": 123,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6752613240418118,
+        "MarginMAE": 9.49459534311109,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6060606060606061,
+        "TourneyMarginMAE": 11.149751152391687
+      }
+    },
+    {
+      "max_depth": 3,
+      "learning_rate": 0.1,
+      "min_child_weight": 25,
+      "reg_lambda": 10.0,
+      "n_estimators": 111,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6766550522648084,
+        "MarginMAE": 9.500677028107571,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6060606060606061,
+        "TourneyMarginMAE": 11.283112085791249
+      }
+    },
+    {
+      "max_depth": 3,
+      "learning_rate": 0.1,
+      "min_child_weight": 100,
+      "reg_lambda": 1.0,
+      "n_estimators": 111,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6763066202090592,
+        "MarginMAE": 9.490933795629608,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6363636363636364,
+        "TourneyMarginMAE": 11.175093720356623
+      }
+    },
+    {
+      "max_depth": 3,
+      "learning_rate": 0.1,
+      "min_child_weight": 100,
+      "reg_lambda": 10.0,
+      "n_estimators": 111,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6763066202090592,
+        "MarginMAE": 9.496897933060362,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6060606060606061,
+        "TourneyMarginMAE": 11.295536395275231
+      }
+    },
+    {
+      "max_depth": 4,
+      "learning_rate": 0.05,
+      "min_child_weight": 25,
+      "reg_lambda": 1.0,
+      "n_estimators": 184,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6759581881533101,
+        "MarginMAE": 9.503127863525838,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6363636363636364,
+        "TourneyMarginMAE": 11.243991000069814
+      }
+    },
+    {
+      "max_depth": 4,
+      "learning_rate": 0.05,
+      "min_child_weight": 25,
+      "reg_lambda": 10.0,
+      "n_estimators": 186,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6738675958188153,
+        "MarginMAE": 9.51032363603586,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6363636363636364,
+        "TourneyMarginMAE": 11.23111739785721
+      }
+    },
+    {
+      "max_depth": 4,
+      "learning_rate": 0.05,
+      "min_child_weight": 100,
+      "reg_lambda": 1.0,
+      "n_estimators": 194,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6759581881533101,
+        "MarginMAE": 9.508896404447663,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6363636363636364,
+        "TourneyMarginMAE": 11.213464535659913
+      }
+    },
+    {
+      "max_depth": 4,
+      "learning_rate": 0.05,
+      "min_child_weight": 100,
+      "reg_lambda": 10.0,
+      "n_estimators": 186,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6763066202090592,
+        "MarginMAE": 9.51046621711983,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6515151515151515,
+        "TourneyMarginMAE": 11.238568348019864
+      }
+    },
+    {
+      "max_depth": 4,
+      "learning_rate": 0.1,
+      "min_child_weight": 25,
+      "reg_lambda": 1.0,
+      "n_estimators": 80,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6759581881533101,
+        "MarginMAE": 9.49120918656099,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6212121212121212,
+        "TourneyMarginMAE": 11.25982453764388
+      }
+    },
+    {
+      "max_depth": 4,
+      "learning_rate": 0.1,
+      "min_child_weight": 25,
+      "reg_lambda": 10.0,
+      "n_estimators": 89,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6770034843205575,
+        "MarginMAE": 9.500701696621675,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6363636363636364,
+        "TourneyMarginMAE": 11.34648279718716
+      }
+    },
+    {
+      "max_depth": 4,
+      "learning_rate": 0.1,
+      "min_child_weight": 100,
+      "reg_lambda": 1.0,
+      "n_estimators": 96,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6770034843205575,
+        "MarginMAE": 9.500751294351414,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6060606060606061,
+        "TourneyMarginMAE": 11.230076536310442
+      }
+    },
+    {
+      "max_depth": 4,
+      "learning_rate": 0.1,
+      "min_child_weight": 100,
+      "reg_lambda": 10.0,
+      "n_estimators": 100,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6752613240418118,
+        "MarginMAE": 9.502835486985692,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6060606060606061,
+        "TourneyMarginMAE": 11.29735871517297
+      }
+    },
+    {
+      "max_depth": 6,
+      "learning_rate": 0.05,
+      "min_child_weight": 25,
+      "reg_lambda": 1.0,
+      "n_estimators": 166,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.675609756097561,
+        "MarginMAE": 9.502309538077121,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6363636363636364,
+        "TourneyMarginMAE": 11.25569121246085
+      }
+    },
+    {
+      "max_depth": 6,
+      "learning_rate": 0.05,
+      "min_child_weight": 25,
+      "reg_lambda": 10.0,
+      "n_estimators": 148,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6777003484320557,
+        "MarginMAE": 9.498387193587975,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6212121212121212,
+        "TourneyMarginMAE": 11.272998680445282
+      }
+    },
+    {
+      "max_depth": 6,
+      "learning_rate": 0.05,
+      "min_child_weight": 100,
+      "reg_lambda": 1.0,
+      "n_estimators": 161,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6773519163763067,
+        "MarginMAE": 9.494876189109178,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6515151515151515,
+        "TourneyMarginMAE": 11.274981651906714
+      }
+    },
+    {
+      "max_depth": 6,
+      "learning_rate": 0.05,
+      "min_child_weight": 100,
+      "reg_lambda": 10.0,
+      "n_estimators": 143,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6773519163763067,
+        "MarginMAE": 9.489107018345091,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6212121212121212,
+        "TourneyMarginMAE": 11.295497209962571
+      }
+    },
+    {
+      "max_depth": 6,
+      "learning_rate": 0.1,
+      "min_child_weight": 25,
+      "reg_lambda": 1.0,
+      "n_estimators": 83,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6780487804878049,
+        "MarginMAE": 9.495343050353865,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6212121212121212,
+        "TourneyMarginMAE": 11.245267221196132
+      }
+    },
+    {
+      "max_depth": 6,
+      "learning_rate": 0.1,
+      "min_child_weight": 25,
+      "reg_lambda": 10.0,
+      "n_estimators": 80,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6752613240418118,
+        "MarginMAE": 9.496070280691887,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6060606060606061,
+        "TourneyMarginMAE": 11.313451791125717
+      }
+    },
+    {
+      "max_depth": 6,
+      "learning_rate": 0.1,
+      "min_child_weight": 100,
+      "reg_lambda": 1.0,
+      "n_estimators": 75,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6777003484320557,
+        "MarginMAE": 9.492657224721038,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.6363636363636364,
+        "TourneyMarginMAE": 11.2762779654427
+      }
+    },
+    {
+      "max_depth": 6,
+      "learning_rate": 0.1,
+      "min_child_weight": 100,
+      "reg_lambda": 10.0,
+      "n_estimators": 93,
+      "valid_2021": {
+        "N": 2870,
+        "WinnerAccuracy": 0.6763066202090592,
+        "MarginMAE": 9.49623621485816,
+        "TourneyN": 66,
+        "TourneyWinnerAccuracy": 0.5909090909090909,
+        "TourneyMarginMAE": 11.31645473070217
+      }
+    }
+  ],
+  "forward_seasons": [
+    {
+      "Season": 2022,
+      "n_estimators": 143,
+      "N": 4419,
+      "WinnerAccuracy": 0.7051369088028966,
+      "MarginMAE": 8.902340155335121,
+      "TourneyN": 67,
+      "TourneyWinnerAccuracy": 0.6268656716417911,
+      "TourneyMarginMAE": 10.599793403451123
+    },
+    {
+      "Season": 2023,
+      "n_estimators": 194,
+      "N": 4677,
+      "WinnerAccuracy": 0.7051528757750695,
+      "MarginMAE": 9.140442040845073,
+      "TourneyN": 67,
+      "TourneyWinnerAccuracy": 0.6567164179104478,
+      "TourneyMarginMAE": 10.027333970167744
+    },
+    {
+      "Season": 2024,
+      "n_estimators": 234,
+      "N": 4691,
+      "WinnerAccuracy": 0.7015561713920273,
+      "MarginMAE": 9.215529567373437,
+      "TourneyN": 67,
+      "TourneyWinnerAccuracy": 0.7014925373134329,
+      "TourneyMarginMAE": 11.87949440950778
+    },
+    {
+      "Season": 2025,
+      "n_estimators": 306,
+      "N": 4713,
+      "WinnerAccuracy": 0.71016337789094,
+      "MarginMAE": 9.107189028774428,
+      "TourneyN": 67,
+      "TourneyWinnerAccuracy": 0.7014925373134329,
+      "TourneyMarginMAE": 10.32886815160068
+    },
+    {
+      "Season": 2026,
+      "n_estimators": 330,
+      "N": 4656,
+      "WinnerAccuracy": 0.6948024054982818,
+      "MarginMAE": 9.204542438568039,
+      "TourneyN": 0
+    }
+  ],
+  "forward_summary": {
+    "N": 23156,
+    "WinnerAccuracy": 0.7033598203489376,
+    "MarginMAE": 9.116335690904895,
+    "TourneyN": 268,
+    "TourneyWinnerAccuracy": 0.6716417910447762,
+    "TourneyMarginMAE": 10.708872483681832
+  },
+  "v5_forward_summary": {
+    "WinnerAccuracy": 0.7040939713249266,
+    "MarginMAE": 9.088151556647256,
+    "TourneyWinnerAccuracy": 0.6567164179104478,
+    "TourneyMarginMAE": 10.687619617788254
+  },
+  "adopted": false
+}

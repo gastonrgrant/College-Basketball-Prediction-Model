@@ -14,6 +14,10 @@ from pathlib import Path
 # =========================================================
 # CONFIG
 # =========================================================
+# V5 is the live model. V4.2 is archive/model_v4_2.py and does not apply home court or schedule.
+# This script asks where the game is played, adds the fitted home-court shift,
+# and scores the Four Factors with separate offense and defense weights.
+# Schedule is a separate fitted term. Neutral games do not invent an arena.
 
 # =========================================================
 # LIVE SCRAPING URLS (replaces CSVs)
@@ -29,6 +33,7 @@ SEASON_OVERRIDE = None
 TRAINING_START_SEASON = 2003
 TRAINING_END_SEASON = 2026
 ACTIVE_SEASON_YEAR = None
+DATA_SOURCE_URL = None
 
 
 def infer_current_ncaa_season(today=None):
@@ -219,7 +224,7 @@ def scrape_table(url):
 # =========================================================
 
 def load_and_prepare_data(team_basic_csv, opp_basic_csv, team_adv_csv, opp_adv_csv):
-    global ACTIVE_SEASON_YEAR
+    global ACTIVE_SEASON_YEAR, DATA_SOURCE_URL
 
     live_error_messages = []
     loaded_live = False
@@ -239,8 +244,15 @@ def load_and_prepare_data(team_basic_csv, opp_basic_csv, team_adv_csv, opp_adv_c
             # avoids accepting an empty/placeholder upcoming-season page.
             if min(len(team_basic), len(opp_basic), len(team_adv), len(opp_adv)) < 50:
                 raise ValueError("season tables are not populated yet")
+            # Before opening night the page lists every school with blank stats.
+            if "G" not in team_basic.columns:
+                raise ValueError("season table has no games column")
+            played = pd.to_numeric(team_basic["G"], errors="coerce")
+            if int((played > 0).sum()) < 50:
+                raise ValueError("no games have been played yet")
 
             ACTIVE_SEASON_YEAR = int(season_year)
+            DATA_SOURCE_URL = urls["team_basic"]
             loaded_live = True
             print(
                 f"Using LIVE Sports-Reference {ACTIVE_SEASON_YEAR} season data "
@@ -252,6 +264,7 @@ def load_and_prepare_data(team_basic_csv, opp_basic_csv, team_adv_csv, opp_adv_c
 
     if not loaded_live:
         ACTIVE_SEASON_YEAR = None
+        DATA_SOURCE_URL = None
         print("Live scrape failed — falling back to local CSV files.")
         if live_error_messages:
             print("Live attempts: " + " | ".join(live_error_messages))
@@ -443,6 +456,33 @@ import re
 import numpy as np
 from functools import lru_cache
 
+_TEAM_STANDINGS = {}
+
+
+def _standing_key(team_name):
+    year = ACTIVE_SEASON_YEAR or infer_current_ncaa_season()
+    return (str(team_name), int(year))
+
+
+def _parse_team_standing(html_text):
+    """Read the AP rank and NCAA seed from a Sports-Reference team page."""
+    ap_rank = None
+    ap_is_final = False
+    rank_match = re.search(
+        r"Rank:</strong>\s*(\d+)(?:st|nd|rd|th)?\s+in the\s*(?:<a[^>]*>)?\s*(Final\s+)?AP Poll",
+        html_text,
+        flags=re.IGNORECASE,
+    )
+    if rank_match:
+        ap_rank = int(rank_match.group(1))
+        ap_is_final = bool(rank_match.group(2))
+    seed = None
+    seed_match = re.search(r"\(#(\d+)\s+seed\b", html_text, flags=re.IGNORECASE)
+    if seed_match:
+        seed = int(seed_match.group(1))
+    return {"ap_rank": ap_rank, "ap_is_final": ap_is_final, "seed": seed}
+
+
 @lru_cache(maxsize=None)
 def get_team_physical_profile(team_name, year=None, min_mp=10.0):
     # Use the same live season as the team-stat model unless explicitly forced.
@@ -520,6 +560,8 @@ def get_team_physical_profile(team_name, year=None, min_mp=10.0):
 
     if res is None:
         return None
+
+    _TEAM_STANDINGS[_standing_key(team_name)] = _parse_team_standing(res.text)
 
     soup = BeautifulSoup(res.content, "lxml")
 
@@ -625,8 +667,17 @@ def get_team_physical_profile(team_name, year=None, min_mp=10.0):
         weights.append(minutes[n])
 
         pos = positions.get(n, "?")
-        if pos in pos_groups:
-            pos_groups[pos].append(h_in)
+        primary = re.split(r"[-/]", str(pos).strip())[0].upper()
+        if primary.startswith("G"):
+            primary = "G"
+        elif primary.startswith("F"):
+            primary = "F"
+        elif primary.startswith("C"):
+            primary = "C"
+        else:
+            primary = None
+        if primary in pos_groups:
+            pos_groups[primary].append(h_in)
 
         # star logic (unchanged)
         if minutes[n] >= 25 or stats[n]["pts"] >= 12:
@@ -672,8 +723,9 @@ def get_team_physical_profile(team_name, year=None, min_mp=10.0):
 # MATCHUP MODEL — V4.1 HISTORICALLY TRAINED OLIVER HYBRID
 # =========================================================
 # IMPORTANT:
-# Dean Oliver Four Factors are the trained core; V3 features are a small
-# residual correction. All prediction-time coefficients are embedded below.
+# Dean Oliver's Four Factors are the trained core. Net rating, three-point
+# attempt rate, and pace were left at zero after the V5 holdout.
+# All prediction-time coefficients are embedded below.
 
 
 # =========================================================
@@ -690,35 +742,35 @@ def get_team_physical_profile(team_name, year=None, min_mp=10.0):
 # _as_fraction() normalizes them before applying the historical coefficients.
 
 FOUR_FACTOR_POINT_COEFS = {
-    # Shooting efficiency
-    "eFG_Diff": 73.4620226969,
-    "Def_eFG_Adv": 58.3245101598,
-
-    # Turnovers
-    "TOV_Adv": 91.8850117640,
-    "ForceTOV_Adv": 73.4087928355,
-
-    # Offensive / defensive rebounding
-    "ORB_Diff": 33.2479851361,
-    "DefORB_Adv": 30.1817552091,
-
-    # Free-throw pressure
-    "FTR_Diff": 12.5769872520,
-    "DefFTR_Adv": 12.1923107577,
+    # Refit on pre-2026 games. Offense and defense keep separate weights.
+    "eFG_Diff": 75.27342715920912,
+    "Def_eFG_Adv": 58.11817300325095,
+    "TOV_Adv": 88.11389453132519,
+    "ForceTOV_Adv": 78.51270993680325,
+    "ORB_Diff": 32.53647172486484,
+    "DefORB_Adv": 32.72169243839539,
+    "FTR_Diff": 7.789341293906361,
+    "DefFTR_Adv": 9.2455258147597,
 }
 
 # These secondary V3 signals were trained ONLY to explain what the Four
 # Factors missed. Their coefficients are intentionally tiny relative to the
 # Four-Factor core, keeping Dean Oliver's framework central to the model.
+# The v5 holdout did not use these. They stay at zero so the tested model is the one that runs.
 V3_RESIDUAL_POINT_COEFS = {
-    "NetRtg_Diff": 0.0081545121,
-    "P3Ar_Diff": 4.9124626635,
-    "Pace_Diff": -0.0287659650,
+    "NetRtg_Diff": 0.0,
+    "P3Ar_Diff": 0.0,
+    "Pace_Diff": 0.0,
 }
 
 # Forward-held-out calibration of predicted margin -> win probability.
 # logit(P[Team A wins]) = WIN_PROB_LOGIT_SLOPE * projected_margin
-WIN_PROB_LOGIT_SLOPE = 0.1432050386
+WIN_PROB_LOGIT_SLOPE = 0.14898045394540615
+
+# Same fit as the Four Factor slopes. +1 is team A at home, 0 is neutral, -1 is team A away.
+HOME_COURT_POINTS = 3.6737017735691313
+# Points for a one-standard-deviation gap in strength of schedule, team A minus team B.
+SCHEDULE_Z_POINTS = 1.8889355683185807
 
 # Learned offense share inside each Four-Factor family.  These are used only
 # for descriptive matchup projections; the final margin uses the separate
@@ -901,13 +953,22 @@ def historically_projected_margin(features, expected_possessions=None, baselines
     v3_correction = float(features["v3_residual_correction"])
     projected_margin = four_factor_margin + v3_correction
 
+    contrib = features["factor_point_contrib"]
     return projected_margin, {
         "four_factor_margin": four_factor_margin,
         "v3_residual_correction": v3_correction,
         "eFG_margin": float(features["efg_margin"]),
+        "eFG_offense": float(contrib["eFG_Diff"]),
+        "eFG_defense": float(contrib["Def_eFG_Adv"]),
         "turnover_margin": float(features["tov_margin"]),
+        "turnover_offense": float(contrib["TOV_Adv"]),
+        "turnover_defense": float(contrib["ForceTOV_Adv"]),
         "rebounding_margin": float(features["orb_margin"]),
+        "rebounding_offense": float(contrib["ORB_Diff"]),
+        "rebounding_defense": float(contrib["DefORB_Adv"]),
         "free_throw_margin": float(features["ftr_margin"]),
+        "free_throw_offense": float(contrib["FTR_Diff"]),
+        "free_throw_defense": float(contrib["DefFTR_Adv"]),
         "net_rating_correction": float(features["residual_point_contrib"]["NetRtg_Diff"]),
         "three_point_rate_correction": float(features["residual_point_contrib"]["P3Ar_Diff"]),
         "pace_correction": float(features["residual_point_contrib"]["Pace_Diff"]),
@@ -927,7 +988,7 @@ def margin_to_win_probability(projected_margin):
 
 
 def compute_matchup(team_a, team_b, full_df, baselines, percentile_tables,
-                    seed_a=None, seed_b=None):
+                    seed_a=None, seed_b=None, location=0):
     if team_a not in full_df["Team"].values:
         raise ValueError(f"{team_a} not found.")
     if team_b not in full_df["Team"].values:
@@ -951,6 +1012,17 @@ def compute_matchup(team_a, team_b, full_df, baselines, percentile_tables,
 
     # No arbitrary blowout multiplier and no second pace-confidence adjustment.
     # Pace is already reflected when efficiency is converted into points.
+    # Home court is the fitted location coefficient from the same regression.
+    location_code = 0 if location is None else int(location)
+    home_court_margin = HOME_COURT_POINTS * location_code
+    schedule_std = float(full_df["SOS"].std(ddof=0)) if "SOS" in full_df.columns else 0.0
+    if schedule_std > 0 and "SOS" in A.index and "SOS" in B.index and pd.notna(A["SOS"]) and pd.notna(B["SOS"]):
+        schedule_margin = SCHEDULE_Z_POINTS * (float(A["SOS"]) - float(B["SOS"])) / schedule_std
+    else:
+        schedule_margin = 0.0
+    projected_margin = float(projected_margin) + home_court_margin + schedule_margin
+    margin_components["home_court_margin"] = home_court_margin
+    margin_components["schedule_margin"] = schedule_margin
     projected_margin = clamp(projected_margin, -35.0, 35.0)
     win_prob_a = margin_to_win_probability(projected_margin)
 
@@ -1034,6 +1106,8 @@ def compute_matchup(team_a, team_b, full_df, baselines, percentile_tables,
         },
         "upset_risk": upset_risk,
         "upset_type": upset_type,
+        "location": location_code,
+        "home_court_margin": home_court_margin,
     }
 
 # =========================================================
@@ -1305,10 +1379,12 @@ def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
         return f"{team}'s {name} is {_profile_number(val)} ({pct_label(p)})"
 
     def mismatch(a_p, b_p):
-        return a_p is not None and b_p is not None and a_p >= 0.55 and b_p <= 0.45
+        return a_p is not None and b_p is not None and (a_p - b_p) >= 0.25
 
     def strong_edge(a_p, b_p):
         return a_p is not None and b_p is not None and a_p >= 0.70 and b_p <= 0.30
+
+    used_stats = set()
 
     # =========================
     # OFFENSE VS DEFENSE
@@ -1330,29 +1406,31 @@ def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
         a_def = pct(team_a, def_stat, lower_def)
         b_def = pct(team_b, def_stat, lower_def)
 
-        if mismatch(a_off, b_def):
-            notes.append(
-                f"{team_a} {phrase} against {team_b}. "
-                f"{fmt(team_a, off_stat, A[off_stat], a_off)}, while {fmt(team_b, def_stat, B[def_stat], b_def)}."
-            )
-
         if strong_edge(a_off, b_def):
             notes.append(
                 f"{team_a} has a major advantage in {label}. "
                 f"{fmt(team_a, off_stat, A[off_stat], a_off)}, while {fmt(team_b, def_stat, B[def_stat], b_def)}."
             )
-
-        if mismatch(b_off, a_def):
+            used_stats.update((off_stat, def_stat))
+        elif mismatch(a_off, b_def):
             notes.append(
-                f"{team_b} {phrase} against {team_a}. "
-                f"{fmt(team_b, off_stat, B[off_stat], b_off)}, while {fmt(team_a, def_stat, A[def_stat], a_def)}."
+                f"{team_a} {phrase} against {team_b}. "
+                f"{fmt(team_a, off_stat, A[off_stat], a_off)}, while {fmt(team_b, def_stat, B[def_stat], b_def)}."
             )
+            used_stats.update((off_stat, def_stat))
 
         if strong_edge(b_off, a_def):
             notes.append(
                 f"{team_b} has a major advantage in {label}. "
                 f"{fmt(team_b, off_stat, B[off_stat], b_off)}, while {fmt(team_a, def_stat, A[def_stat], a_def)}."
             )
+            used_stats.update((off_stat, def_stat))
+        elif mismatch(b_off, a_def):
+            notes.append(
+                f"{team_b} {phrase} against {team_a}. "
+                f"{fmt(team_b, off_stat, B[off_stat], b_off)}, while {fmt(team_a, def_stat, A[def_stat], a_def)}."
+            )
+            used_stats.update((off_stat, def_stat))
 
     # =========================
     # OFFENSE VS OFFENSE
@@ -1368,6 +1446,8 @@ def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
     ]
 
     for stat, lower in pure_stats:
+        if stat in used_stats:
+            continue
         a_p = pct(team_a, stat, lower)
         b_p = pct(team_b, stat, lower)
 
@@ -1398,6 +1478,8 @@ def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
     ]
 
     for stat, lower in def_stats:
+        if stat in used_stats:
+            continue
         a_p = pct(team_a, stat, lower)
         b_p = pct(team_b, stat, lower)
 
@@ -1420,7 +1502,7 @@ def matchup_tensions(team_a, team_b, A, B, full_df, percentile_tables):
     # PACE
     # =========================
     if "Pace" in A.index and "Pace" in B.index:
-        if abs(A["Pace"] - B["Pace"]) >= 2:
+        if abs(A["Pace"] - B["Pace"]) >= 3:
             faster = team_a if A["Pace"] > B["Pace"] else team_b
             slower = team_b if faster == team_a else team_a
             notes.append(
@@ -1449,21 +1531,22 @@ def game_script(team_a, team_b, A, B, full_df, percentile_tables, matchup_result
     avg_pace = matchup_result["expected_possessions"]
     pace_pct = float((full_df["Pace"] <= avg_pace).mean())
 
-    if abs(A["Pace"] - B["Pace"]) >= 3.0:
-        faster = team_a if A["Pace"] > B["Pace"] else team_b
-        slower = team_b if faster == team_a else team_a
-        notes.append(f"There is a real tempo clash here. {faster} wants to speed the game up, while {slower} is more comfortable in a slower setting.")
-
     if pace_pct <= 0.35:
-        notes.append("This projects as a lower possession game, which naturally raises volatility and gives the underdog more room to hang around.")
+        notes.append(
+            f"The projected pace is {avg_pace:.1f} possessions, slower than about {round((1 - pace_pct) * 100)}% of Division I teams. "
+            "Fewer possessions give the trailing team fewer chances to get buried."
+        )
     elif pace_pct >= 0.65:
-        notes.append("This projects as a higher possession game, which usually gives the better team more chances to separate.")
+        notes.append(
+            f"The projected pace is {avg_pace:.1f} possessions, faster than about {round(pace_pct * 100)}% of Division I teams. "
+            "More possessions give the better team more chances to pull away."
+        )
 
     # Variance
     a_3par = oriented_percentile(full_df, percentile_tables, team_a, "3PAr")
     b_3par = oriented_percentile(full_df, percentile_tables, team_b, "3PAr")
     if (a_3par is not None and a_3par >= 0.80) or (b_3par is not None and b_3par >= 0.80):
-        notes.append("At least one side is highly dependent on the three, so shot variance could swing this game more than usual.")
+        notes.append("At least one team takes a high share of its shots from three. A hot or cold night from deep can move the score more than these season numbers suggest.")
 
     return notes[:15]
 
@@ -1494,23 +1577,17 @@ def generate_game_drivers(team_a, team_b, A, B, full_df, percentile_tables, winn
     w_efg = pct(w, "eFG%")
     l_def_efg = pct(l, "Opp_eFG%", lower=True)
 
-    if w_efg and l_def_efg:
-        if w_efg > l_def_efg + 0.10:
-            add(f"{w} should have a clear scoring efficiency advantage in this matchup.")
-        elif w_efg > 0.60:
-            add(f"{w} brings strong shooting efficiency into this game.")
+    if w_efg and l_def_efg and w_efg >= l_def_efg + 0.25:
+        add(f"{w} should have a clear scoring efficiency advantage in this matchup.")
 
     # =========================
-    # TURNOVERS (LESS STRICT)
+    # TURNOVERS
     # =========================
     w_tov = pct(w, "TOV%", lower=True)
     l_def_tov = pct(l, "Opp_TOV%")
 
-    if w_tov and l_def_tov:
-        if w_tov > l_def_tov + 0.15:
-            add(f"{w} should control the game with superior ball security.")
-        elif w_tov > 0.70:
-            add(f"{w} is likely to take care of the ball and limit mistakes.")
+    if w_tov and l_def_tov and w_tov >= 0.80 and w_tov >= l_def_tov + 0.25:
+        add(f"{w} should control the game with superior ball security.")
 
     # =========================
     # REBOUNDING
@@ -1518,9 +1595,8 @@ def generate_game_drivers(team_a, team_b, A, B, full_df, percentile_tables, winn
     w_orb = pct(w, "ORB%")
     l_def_orb = pct(l, "Opp_ORB%", lower=True)
 
-    if w_orb and l_def_orb:
-        if w_orb > l_def_orb + 0.10:
-            add(f"{w} may create extra possessions through offensive rebounding.")
+    if w_orb and l_def_orb and w_orb >= l_def_orb + 0.25:
+        add(f"{w} may create extra possessions through offensive rebounding.")
 
     # =========================
     # OVERALL EFFICIENCY (NEW)
@@ -1528,29 +1604,8 @@ def generate_game_drivers(team_a, team_b, A, B, full_df, percentile_tables, winn
     w_ortg = pct(w, "ORtg")
     l_ortg = pct(l, "ORtg")
 
-    if w_ortg and l_ortg and w_ortg > l_ortg:
+    if w_ortg and l_ortg and w_ortg >= l_ortg + 0.15:
         add(f"{w} holds the stronger overall offensive profile in this matchup.")
-
-    # =========================
-    # TEMPO
-    # =========================
-    w_pace = pct(w, "Pace")
-    l_pace = pct(l, "Pace")
-
-    if w_pace and l_pace:
-        if w_pace > 0.65 and l_pace > 0.65:
-            add(f"A faster game benefits {w} by increasing possession volume.")
-        elif w_pace < 0.35 and l_pace < 0.35:
-            add(f"A slower game reduces possessions and increases variance.")
-
-    # =========================
-    # FALLBACK (guarantee at least 2–3 lines)
-    # =========================
-    if len(drivers) < 2:
-        add(f"{w} projects as the more complete team across key efficiency metrics.")
-
-    if len(drivers) < 3:
-        add(f"{w} is better positioned to dictate how this game is played.")
 
     return drivers[:5]
 
@@ -1722,12 +1777,27 @@ body {
   line-height: 1.5;
 }
 .sheet {
+  position: relative;
   max-width: 1080px;
   margin: 28px auto;
   padding: 36px 40px 28px;
   background: var(--sheet);
   border-top: 4px solid var(--ink);
 }
+.data-from {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  max-width: 58%;
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: right;
+}
+.data-from a { color: inherit; text-decoration: none; }
+.data-from a:hover { text-decoration: underline; }
 .kicker, .meta, .verdict, .factor, .tags h3, .section-label, table, .stat, .footer, .pos, .size {
   font-family: var(--sans);
 }
@@ -1786,6 +1856,7 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 .prob { margin: 4px 0 14px; font-size: 15px; }
+.venue { margin: 8px 0 0; color: var(--muted); font-size: 13px; letter-spacing: 0.01em; }
 .split {
   display: flex;
   height: 14px;
@@ -1799,7 +1870,8 @@ h1 {
 section { padding: 26px 0; border-top: 1px solid var(--line); }
 .section-label { margin-bottom: 14px; }
 .factor { margin: 0 0 14px; }
-.factor-top { font-size: 14px; margin-bottom: 6px; }
+.factor-top { font-size: 14px; margin-bottom: 2px; }
+.factor-split { margin: 0 0 6px; color: var(--muted); font-size: 12px; line-height: 1.4; }
 .diverge {
   position: relative;
   display: grid;
@@ -1867,7 +1939,7 @@ section { padding: 26px 0; border-top: 1px solid var(--line); }
 }
 .cmp-cell {
   display: grid;
-  grid-template-columns: 64px 1fr 46px;
+  grid-template-columns: 52px minmax(64px, 1fr) 118px;
   gap: 8px;
   align-items: center;
   font-family: var(--sans);
@@ -1877,7 +1949,8 @@ section { padding: 26px 0; border-top: 1px solid var(--line); }
 .cmp-cell .num { font-weight: 700; }
 .cmp-cell.a .num, .cmp-cell.a .mini-name { color: var(--a); }
 .cmp-cell.b .num, .cmp-cell.b .mini-name { color: var(--b); }
-.cmp-cell .pct { color: var(--muted); font-size: 13px; text-align: right; }
+.cmp-cell .pct { color: var(--muted); font-size: 12px; line-height: 1.2; text-align: right; }
+.rank { margin: 8px 0 0; font-family: var(--sans); font-size: 14px; }
 .mini-name { display: none; font-size: 12px; font-weight: 700; }
 .meter { height: 9px; background: var(--track); }
 .meter span { display: block; height: 100%; }
@@ -1907,6 +1980,7 @@ section { padding: 26px 0; border-top: 1px solid var(--line); }
 .reading { max-width: 72ch; }
 @media (max-width: 800px) {
   .sheet { margin: 0; padding: 22px 16px 18px; }
+  .data-from { position: static; max-width: none; margin: 0 0 12px; }
   .top { align-items: flex-start; flex-direction: column; gap: 8px; }
   .hero, .teams, .narrative { grid-template-columns: 1fr; }
   .side-b, .side-b h1 { text-align: left; }
@@ -1930,10 +2004,14 @@ _COMPARE_GROUPS = [
         ("Pace", "Possessions per game", "Pace", False),
     ]),
     ("Four Factors", [
-        ("Effective FG%", "Shooting efficiency, counting threes as 1.5", "eFG%", False),
-        ("Turnover rate", "Lower is better, so the longer bar is the safer offense", "TOV%", True),
-        ("Offensive rebound %", "Share of missed shots the offense grabs", "ORB%", False),
-        ("Free throw rate", "Free throws attempted per field-goal attempt", "FT/FGA", False),
+        ("Effective FG%", "Offense. Shooting efficiency, counting threes as 1.5", "eFG%", False),
+        ("Effective FG% allowed", "Defense. A longer bar means opponents shoot worse", "Opp_eFG%", True),
+        ("Turnover rate", "Offense. A longer bar means fewer turnovers", "TOV%", True),
+        ("Forced turnover rate", "Defense. A longer bar means the defense takes the ball more often", "Opp_TOV%", False),
+        ("Offensive rebound %", "Offense. Share of missed shots the offense grabs", "ORB%", False),
+        ("Defensive rebounding", "Defense. A longer bar means opponents grab fewer offensive rebounds", "Opp_ORB%", True),
+        ("Free throw rate", "Offense. Free throws attempted per field-goal attempt", "FT/FGA", False),
+        ("Free throw rate allowed", "Defense. A longer bar means opponents get to the line less", "Opp_FT/FGA", True),
     ]),
     ("Shooting", [
         ("3-point %", "Share of threes that go in", "3P%", False),
@@ -2055,20 +2133,164 @@ def _ordinal(p):
     return label.replace(" percentile", "")
 
 
+def _point_side(value, team_a, team_b):
+    value = float(value)
+    if abs(value) < 0.05:
+        return "even"
+    team = team_a if value > 0 else team_b
+    return f"{abs(value):.1f} pts toward {team}"
+
+
 def _favor_phrase(value, team_a, team_b):
     if abs(value) < 0.05:
-        return "are a wash"
+        return "are even"
     team = team_a if value > 0 else team_b
-    return f"favor {_esc(team)} by {abs(value):.1f} points"
+    return f"favor {team} by {abs(value):.1f} points"
+
+
+def _home_court_sentence(result, team_a, team_b):
+    location = int(result.get("location") or 0)
+    points = f"{HOME_COURT_POINTS:.3f}"
+    if location > 0:
+        return f"{team_a} home adds {points} points."
+    if location < 0:
+        return f"{team_b} home adds {points} points."
+    return "Neutral site, so home court adds nothing."
+
+
+_VENUE_PAGES = {
+    "Miami (FL)": "Miami Hurricanes men's basketball",
+    "Miami (OH)": "Miami RedHawks men's basketball",
+    "Connecticut": "UConn Huskies men's basketball",
+    "UConn": "UConn Huskies men's basketball",
+    "Ole Miss": "Ole Miss Rebels men's basketball",
+    "UCF": "UCF Knights men's basketball",
+    "USC": "USC Trojans men's basketball",
+    "LSU": "LSU Tigers men's basketball",
+    "UNLV": "UNLV Rebels men's basketball",
+    "VCU": "VCU Rams men's basketball",
+    "SMU": "SMU Mustangs men's basketball",
+    "UAB": "UAB Blazers men's basketball",
+    "BYU": "BYU Cougars men's basketball",
+    "St. John's": "St. John's Red Storm men's basketball",
+    "St. John's (NY)": "St. John's Red Storm men's basketball",
+    "Saint Mary's": "Saint Mary's Gaels men's basketball",
+}
+
+
+def _wiki_plain(value):
+    value = re.sub(r"<ref[^>]*>.*?</ref>", "", value, flags=re.I | re.S)
+    value = re.sub(r"<ref[^>/]*/>", "", value, flags=re.I)
+    value = re.sub(r"<br\s*/?>", " and ", value, flags=re.I)
+    value = re.sub(r"<[^>]+>", "", value)
+    value = re.sub(r"\{\{[^{}]*\}\}", "", value)
+    value = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", value)
+    value = re.sub(r"\(\s*[\d,]+\s*\)", "", value)
+    value = value.replace("'''", "").replace("''", "")
+    value = re.sub(r"(\s+and\s+)+", " and ", value, flags=re.I)
+    return re.sub(r"\s+", " ", value).strip(" .")
+
+
+def _wiki_infobox(title):
+    response = requests.get(
+        "https://en.wikipedia.org/w/api.php",
+        params={
+            "action": "query",
+            "titles": title,
+            "prop": "revisions",
+            "rvprop": "content",
+            "rvslots": "main",
+            "format": "json",
+            "redirects": 1,
+        },
+        headers={"User-Agent": "CollegeBasketballModel/1.0 (personal research)"},
+        timeout=12,
+    )
+    pages = response.json().get("query", {}).get("pages", {})
+    page = next(iter(pages.values()), {})
+    revisions = page.get("revisions") or []
+    if not revisions:
+        return None, None
+    text = revisions[0].get("slots", {}).get("main", {}).get("*", "")
+    arena = place = None
+    for line in text.splitlines():
+        arena_match = re.match(r"\|\s*arena\s*=\s*(.*)", line, flags=re.I)
+        place_match = re.match(r"\|\s*location\s*=\s*(.*)", line, flags=re.I)
+        if arena_match and not arena:
+            arena = _wiki_plain(arena_match.group(1)) or None
+        if place_match and not place:
+            place = _wiki_plain(place_match.group(1)) or None
+    return arena, place
+
+
+@lru_cache(maxsize=None)
+def lookup_home_venue(team_name):
+    """Arena and city for a team's home floor. Neutral games do not use this."""
+    bare = re.sub(r"\s*\([^)]*\)", "", str(team_name)).strip()
+    queries = []
+    if team_name in _VENUE_PAGES:
+        queries.append(_VENUE_PAGES[team_name])
+    queries.append(f"{bare} men's basketball")
+    seen = set()
+    try:
+        for query in queries:
+            found = requests.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={"action": "query", "list": "search", "srsearch": query, "srlimit": 5, "format": "json"},
+                headers={"User-Agent": "CollegeBasketballModel/1.0 (personal research)"},
+                timeout=12,
+            )
+            for hit in found.json().get("query", {}).get("search", []):
+                title = hit.get("title") or ""
+                if title in seen or re.search(r"\d{4}", title) or "basketball" not in title.lower():
+                    continue
+                seen.add(title)
+                arena, place = _wiki_infobox(title)
+                if arena or place:
+                    return {"arena": arena, "place": place}
+    except Exception:
+        return {"arena": None, "place": None}
+    return {"arena": None, "place": None}
+
+
+def venue_line(location, team_a, team_b):
+    if not location:
+        return "Neutral site"
+    home = team_a if int(location) > 0 else team_b
+    venue = lookup_home_venue(home)
+    arena = venue.get("arena")
+    place = venue.get("place")
+    if arena and place:
+        return f"{arena} · {place}"
+    if arena:
+        return arena
+    if place:
+        return f"{home} home · {place}"
+    return f"{home} home"
+
+
+def _data_source_tag():
+    if not DATA_SOURCE_URL:
+        return '<p class="data-from">Data from local CSV files</p>'
+    href = _esc(DATA_SOURCE_URL)
+    visible = href.replace("/", "/<wbr>")
+    return f'<p class="data-from">Data from <a href="{href}">{visible}</a></p>'
+
+
+def _season_name(year):
+    end = int(year)
+    return f"{end - 1}–{str(end)[-2:]}"
 
 
 def _season_line():
     retrieved = date.today().strftime("%B %d, %Y").replace(" 0", " ")
     year = ACTIVE_SEASON_YEAR
     if year is None:
-        return f"Local CSV stats · {retrieved}"
-    end = int(year)
-    return f"{end - 1}–{str(end)[-2:]} season · stats through {retrieved}"
+        return f"Saved team stats on this computer · {retrieved}"
+    season = _season_name(year)
+    if int(year) < infer_current_ncaa_season():
+        return f"{season} season · final team stats"
+    return f"{season} season · team stats through {retrieved}"
 
 
 def _channel(value):
@@ -2165,7 +2387,7 @@ def _comparison_html(team_a, team_b, row_a, row_b, full_df, percentile_tables):
                         team=_esc(team),
                         value=_fmt_value(col, row[col]),
                         width=width,
-                        ordinal=_esc(_ordinal(percentile)),
+                        ordinal=_esc(pct_label(percentile) or "—"),
                     )
                 )
             rows.append(
@@ -2181,8 +2403,9 @@ def _comparison_html(team_a, team_b, row_a, row_b, full_df, percentile_tables):
     return (
         "<section>"
         "<p class=\"section-label\">Season profile</p>"
-        "<p class=\"hint\">Each row is one stat. The number is the season figure, the bar is the national rank, "
-        "and a longer bar is better. Defensive rating and turnover rate are ranked so a longer bar means the better defense or fewer turnovers.</p>"
+        "<p class=\"hint\">The text after each bar is a percentile, not a rank in the country. "
+        "98th percentile means better than 98% of Division I teams. A longer bar is always the better result, "
+        "including the defensive rows, where a longer bar means the defense allows less.</p>"
         + "".join(groups)
         + "</section>"
     )
@@ -2191,43 +2414,59 @@ def _comparison_html(team_a, team_b, row_a, row_b, full_df, percentile_tables):
 def _factor_html(team_a, team_b, result):
     parts = result.get("margin_components") or {}
     factors = [
-        ("Shooting", parts.get("eFG_margin", 0.0)),
-        ("Turnovers", parts.get("turnover_margin", 0.0)),
-        ("Rebounding", parts.get("rebounding_margin", 0.0)),
-        ("Free throws", parts.get("free_throw_margin", 0.0)),
+        ("Shooting", "eFG_margin", "eFG_offense", "eFG_defense"),
+        ("Turnovers", "turnover_margin", "turnover_offense", "turnover_defense"),
+        ("Rebounding", "rebounding_margin", "rebounding_offense", "rebounding_defense"),
+        ("Free throws", "free_throw_margin", "free_throw_offense", "free_throw_defense"),
     ]
-    scale = max([abs(float(value)) for _, value in factors] + [1.0])
+    totals = [float(parts.get(key, 0.0)) for _, key, _, _ in factors]
+    scale = max([abs(value) for value in totals] + [1.0])
     rows = []
-    for label, value in factors:
-        value = float(value)
+    for label, total_key, offense_key, defense_key in factors:
+        value = float(parts.get(total_key, 0.0))
         magnitude = min(100.0, abs(value) / scale * 100.0)
         left = f"{magnitude:.1f}" if value > 0 else "0"
         right = f"{magnitude:.1f}" if value < 0 else "0"
-        if abs(value) < 0.05:
-            detail = "Even"
-        else:
-            favored = team_a if value > 0 else team_b
-            detail = f"{abs(value):.1f} pts toward {favored}"
+        detail = "Even" if abs(value) < 0.05 else _point_side(value, team_a, team_b)
+        split = (
+            f"Offense: {_point_side(parts.get(offense_key, 0.0), team_a, team_b)}. "
+            f"Defense: {_point_side(parts.get(defense_key, 0.0), team_a, team_b)}."
+        )
         rows.append(
             "<div class=\"factor\">"
             f"<div class=\"factor-top\"><span>{_esc(label)}</span><span>{_esc(detail)}</span></div>"
+            f"<p class=\"factor-split\">{_esc(split)}</p>"
             "<div class=\"diverge\" aria-hidden=\"true\">"
             f"<div class=\"half left\"><span style=\"width:{left}%\"></span></div>"
             f"<div class=\"half right\"><span style=\"width:{right}%\"></span></div>"
             "</div></div>"
         )
     four = float(parts.get("four_factor_margin", 0.0))
-    residual = float(parts.get("v3_residual_correction", 0.0))
+    home_court = float(parts.get("home_court_margin", 0.0))
+    schedule = float(parts.get("schedule_margin", 0.0))
+    if abs(home_court) < 0.05:
+        home_line = "Neutral site, so home court adds nothing."
+    else:
+        home_line = f"Home court adds {abs(home_court):.3f} points toward {team_a if home_court > 0 else team_b}."
+    if abs(schedule) < 0.05:
+        schedule_line = "Strength of schedule does not move the margin."
+    else:
+        schedule_line = (
+            f"Strength of schedule adds {abs(schedule):.1f} points toward "
+            f"{team_a if schedule > 0 else team_b}."
+        )
     summary = (
-        f"The Four Factors {_favor_phrase(four, team_a, team_b)}. "
-        f"Other adjustments {_favor_phrase(residual, team_a, team_b)}."
+        f"Added together, shooting, turnovers, rebounding, and free throws {_favor_phrase(four, team_a, team_b)}. "
+        f"{home_line} {schedule_line}"
     )
     return (
         "<section>"
         "<p class=\"section-label\">Where the margin comes from</p>"
-        f"<p class=\"hint\">Left of the center line favors {_esc(team_a)}. Right favors {_esc(team_b)}.</p>"
+        f"<p class=\"hint\">Each bar is that factor’s effect on the projected margin, in points. "
+        f"Left of center favors {_esc(team_a)}. Right of center favors {_esc(team_b)}. "
+        "The line under each bar splits the same points into offense and defense.</p>"
         + "".join(rows)
-        + f"<p class=\"summary\">{summary}</p>"
+        + f"<p class=\"summary\">{_esc(summary)}</p>"
         + "</section>"
     )
 
@@ -2300,7 +2539,7 @@ def _team_card(team, css_class, profile, tags):
 
 def _notes_html(commentary):
     columns = []
-    for title, key in (("Matchup notes", "tensions"), ("Game script", "game_script")):
+    for title, key in (("Matchup notes", "tensions"), ("Projected game shape", "game_script")):
         notes = [_plain_note(note) for note in commentary.get(key) or []]
         notes = [note for note in notes if note]
         if not notes:
@@ -2325,50 +2564,117 @@ def _report_slug(name):
     return slug or "team"
 
 
-def build_matchup_page(team_a, team_b, result, commentary, profile_a, profile_b, full_df, percentile_tables):
+def _pick_context_sentence(winner, loser, win_prob, upset):
+    if win_prob < 0.55:
+        sentence = f"This is a toss-up. A {loser} win would be a normal result."
+    elif win_prob < 0.65:
+        sentence = f"{winner} is a slight favorite, and {loser} still wins this matchup often."
+    elif win_prob < 0.80:
+        sentence = f"{winner} is a clear favorite."
+    else:
+        sentence = f"{winner} is a strong favorite, by a comfortable margin."
+    if upset:
+        sentence += f" It is an upset pick because {winner} is clearly the lower-ranked team."
+    return sentence
+
+
+def _postseason_is_set(standing_a, standing_b):
+    return bool((standing_a or {}).get("seed") or (standing_b or {}).get("seed"))
+
+
+def _rank_line(standing, postseason):
+    season = _season_name(ACTIVE_SEASON_YEAR) if ACTIVE_SEASON_YEAR else "this"
+    if not standing:
+        return "Ranking unavailable"
+    if postseason:
+        seed = standing.get("seed")
+        if seed:
+            return f"{season} NCAA tournament, {seed} seed"
+        return f"Not in the {season} NCAA tournament"
+    rank = standing.get("ap_rank")
+    if not rank:
+        return f"Unranked in the {season} AP poll"
+    label = "Final AP" if standing.get("ap_is_final") else "AP"
+    return f"{label} #{rank} in the {season} poll"
+
+
+def _is_upset_pick(winner, loser, standing_winner, standing_loser, postseason):
+    winner_standing = standing_winner or {}
+    loser_standing = standing_loser or {}
+    if postseason:
+        winner_seed = winner_standing.get("seed")
+        loser_seed = loser_standing.get("seed")
+        if winner_seed and loser_seed:
+            return winner_seed - loser_seed >= 3
+        return winner_seed is None and loser_seed is not None
+    winner_rank = winner_standing.get("ap_rank")
+    loser_rank = loser_standing.get("ap_rank")
+    if loser_rank is not None and winner_rank is None:
+        return True
+    if winner_rank is not None and loser_rank is not None:
+        return winner_rank - loser_rank >= 10
+    return False
+
+
+def build_matchup_page(team_a, team_b, result, commentary, profile_a, profile_b, full_df, percentile_tables, venue_text=""):
     row_a = full_df.loc[full_df["Team"] == team_a].iloc[0]
     row_b = full_df.loc[full_df["Team"] == team_b].iloc[0]
     prob_a = float(result["win_prob_a"])
     prob_b = 1.0 - prob_a
     winner = result["winner"]
-    pick_a = "<p class=\"pick\">Pick</p>" if winner == team_a else ""
-    pick_b = "<p class=\"pick\">Pick</p>" if winner == team_b else ""
+    pick_a = "<p class=\"pick\">Model pick</p>" if winner == team_a else ""
+    pick_b = "<p class=\"pick\">Model pick</p>" if winner == team_b else ""
     tags_a = commentary["winner_tags"] if winner == team_a else commentary["loser_tags"]
     tags_b = commentary["winner_tags"] if winner == team_b else commentary["loser_tags"]
     flex_a = max(prob_a, 0.02)
     flex_b = max(prob_b, 0.02)
     color_a, color_b = _team_color_pair(team_a, team_b)
+    standing_a = _TEAM_STANDINGS.get(_standing_key(team_a))
+    standing_b = _TEAM_STANDINGS.get(_standing_key(team_b))
+    postseason = _postseason_is_set(standing_a, standing_b)
+    rank_a = _rank_line(standing_a, postseason)
+    rank_b = _rank_line(standing_b, postseason)
+    winner_standing = standing_a if result["winner"] == team_a else standing_b
+    loser_standing = standing_b if result["winner"] == team_a else standing_a
+    upset = _is_upset_pick(result["winner"], result["loser"], winner_standing, loser_standing, postseason)
+    pick_context = _pick_context_sentence(result["winner"], result["loser"], float(result["win_prob"]), upset)
+    favored_by = f"{result['winner']} is favored by {float(result['projected_margin']):.1f} points."
+    winner_chance = f"{result['winner']} wins {float(result['win_prob']) * 100:.1f}% of the time in the model."
+    home_court_line = _home_court_sentence(result, team_a, team_b)
     body = f"""
     <header class="top">
       <div>
         <p class="kicker">Matchup report</p>
         <p class="meta">{_esc(_season_line())}</p>
       </div>
-      <p class="meta">Four Factors model</p>
+      <p class="meta">Season offense and defense, weighted by past games</p>
     </header>
     <section class="hero">
       <div class="side-a">
         <p class="side">First team</p>
         <h1>{_esc(team_a)}</h1>
+        <p class="rank">{_esc(rank_a)}</p>
         {pick_a}
       </div>
       <div class="verdict">
-        <p class="kicker">Projected spread</p>
+        <p class="kicker">Projected margin</p>
         <p class="spread">{_esc(result['projected_spread_text'].replace(' -', ' −'))}</p>
-        <p class="prob">{result['win_prob'] * 100:.1f}% win probability</p>
+        {f'<p class="venue">{_esc(venue_text)}</p>' if venue_text else ''}
+        <p class="prob">{_esc(favored_by)} {_esc(winner_chance)} {_esc(pick_context)}</p>
         <div class="split" role="img" aria-label="{_esc(team_a)} {prob_a * 100:.1f} percent, {_esc(team_b)} {prob_b * 100:.1f} percent">
           <div class="seg a" style="flex:{flex_a:.4f} 1 0"></div>
           <div class="seg b" style="flex:{flex_b:.4f} 1 0"></div>
         </div>
         <div class="split-labels">
-          <span>{_esc(team_a)} {prob_a * 100:.1f}%</span>
-          <span>{prob_b * 100:.1f}% {_esc(team_b)}</span>
+          <span>{_esc(team_a)} wins {prob_a * 100:.1f}% of the time</span>
+          <span>{_esc(team_b)} wins {prob_b * 100:.1f}% of the time</span>
         </div>
-        <p class="sub">{result['expected_possessions']:.1f} expected possessions · upset risk { _esc(result['upset_risk']).lower() }</p>
+        <p class="sub">{_esc(home_court_line)} The game is projected at {result['expected_possessions']:.1f} possessions.</p>
       </div>
       <div class="side-b">
         <p class="side">Second team</p>
         <h1>{_esc(team_b)}</h1>
+        <p class="rank">{_esc(rank_b)}</p>
         {pick_b}
       </div>
     </section>
@@ -2382,7 +2688,7 @@ def build_matchup_page(team_a, team_b, result, commentary, profile_a, profile_b,
       </div>
     </section>
     {_notes_html(commentary)}
-    <p class="footer">Sports-Reference college basketball stats. The spread is the model's projected margin, built mainly from Dean Oliver's Four Factors. Bar colors are school colors when the program knows them.</p>
+    <p class="footer">Team stats come from Sports-Reference. The margin uses separate offense and defense weights for shooting, turnovers, rebounding, and free throws, plus home court and strength of schedule. Those weights were fit on college games before 2026. Running a matchup does not train the model again. Bar colors are school colors when the program knows them.</p>
     """
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -2394,6 +2700,7 @@ def build_matchup_page(team_a, team_b, result, commentary, profile_a, profile_b,
 </head>
 <body>
   <main class="sheet" style="--a:{color_a};--b:{color_b}">
+    {_data_source_tag()}
     {body}
   </main>
 </body>
@@ -2411,6 +2718,7 @@ def show_matchup_report(
     full_df,
     percentile_tables,
     open_browser=True,
+    venue_text="",
 ):
     page = build_matchup_page(
         team_a,
@@ -2421,6 +2729,7 @@ def show_matchup_report(
         profile_b,
         full_df,
         percentile_tables,
+        venue_text=venue_text,
     )
     out_dir = Path(__file__).resolve().parent / "reports"
     out_dir.mkdir(exist_ok=True)
@@ -2444,6 +2753,23 @@ def show_matchup_report(
 # =========================================================
 # TEAM LOOKUP HELPERS
 # =========================================================
+
+def ask_site(team_a, team_b):
+    """Return +1, -1, or 0 for team A home, team B home, or neutral."""
+    print("Where is it played?")
+    print(f"  1  {team_a} home")
+    print(f"  2  {team_b} home")
+    print("  3  Neutral site")
+    while True:
+        raw = input("Choice [3]: ").strip().lower()
+        if raw in {"", "3", "neutral", "neutral site", "n"}:
+            return 0
+        if raw in {"1", team_a.lower(), f"{team_a.lower()} home"}:
+            return 1
+        if raw in {"2", team_b.lower(), f"{team_b.lower()} home"}:
+            return -1
+        print("Enter 1, 2, 3, or press Enter for a neutral site.")
+
 
 def find_team_name(user_input, df):
     lookup = canonical_lookup_name(user_input)
@@ -2504,15 +2830,16 @@ def main():
             # 🔥 FIX TEAM NAME MATCHING (you already wrote this function)
             team_a = find_team_name(team_a, full_df)
             team_b = find_team_name(team_b, full_df)
+            location = ask_site(team_a, team_b)
+            played_at = venue_line(location, team_a, team_b)
 
-            # 🔥 THIS IS YOUR ACTUAL MODEL FUNCTION
             result = compute_matchup(
                 team_a,
                 team_b,
                 full_df,
                 baselines,
-                percentile_tables
-                
+                percentile_tables,
+                location=location,
             )
 
             # 🔥 BUILD COMMENTARY (YOU WERE MISSING THIS)
@@ -2539,6 +2866,7 @@ def main():
                 profile_b,
                 full_df,
                 percentile_tables,
+                venue_text=played_at,
             )
 
         except Exception as e:

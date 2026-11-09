@@ -1,0 +1,52 @@
+{
+  "all_games": {
+    "N": 23156,
+    "WinnerAccuracy": 0.7040939713249266,
+    "MarginMAE": 9.088151556647256,
+    "RegularN": 22888,
+    "RegularWinnerAccuracy": 0.7046487242222998,
+    "RegularMarginMAE": 9.069423077077797
+  },
+  "cuts": {
+    "12-01": {
+      "N": 22147,
+      "WinnerAccuracy": 0.7038876597281799,
+      "MarginMAE": 9.032681913743565,
+      "RegularN": 21879,
+      "RegularWinnerAccuracy": 0.7044654691713516,
+      "RegularMarginMAE": 9.012410269487246
+    },
+    "12-15": {
+      "N": 19739,
+      "WinnerAccuracy": 0.7008967019605856,
+      "MarginMAE": 8.993845916267867,
+      "RegularN": 19471,
+      "RegularWinnerAccuracy": 0.7015048020132505,
+      "RegularMarginMAE": 8.97053271448021
+    },
+    "01-01": {
+      "N": 17324,
+      "WinnerAccuracy": 0.6947587162318172,
+      "MarginMAE": 8.90975795732006,
+      "RegularN": 17056,
+      "RegularWinnerAccuracy": 0.6953564727954972,
+      "RegularMarginMAE": 8.88182251378081
+    },
+    "01-15": {
+      "N": 14163,
+      "WinnerAccuracy": 0.6967450398926781,
+      "MarginMAE": 8.882302367127886,
+      "RegularN": 13895,
+      "RegularWinnerAccuracy": 0.6975170924793092,
+      "RegularMarginMAE": 8.847482286294712
+    },
+    "02-01": {
+      "N": 10082,
+      "WinnerAccuracy": 0.7022416187264432,
+      "MarginMAE": 8.89873097558157,
+      "RegularN": 9814,
+      "RegularWinnerAccuracy": 0.7034848176074995,
+      "RegularMarginMAE": 8.849880134323023
+    }
+  }
+}

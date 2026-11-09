@@ -1,5 +1,9 @@
 # March Madness Prediction Model V4.2
 
+This document describes the archived script `archive/model_v4_2.py`. The live model is V5, in `predict_matchup.py`, and is documented in the top-level `README.md`.
+
+
+
 A college basketball matchup model built around Dean Oliver's Four Factors, with the actual point values of those factors learned from historical NCAA games instead of being assigned by hand.
 
 The model is designed to answer one question:

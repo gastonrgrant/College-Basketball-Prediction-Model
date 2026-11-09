@@ -1,0 +1,233 @@
+{
+  "chosen": "eight_home_schedule",
+  "trained_on": "seasons before 2026",
+  "coefficients": {
+    "eFG_Diff": 75.27342715920912,
+    "Def_eFG": 58.11817300325095,
+    "TOV_Diff": 88.11389453132519,
+    "Def_TOV": 78.51270993680325,
+    "ORB_Diff": 32.53647172486484,
+    "Def_ORB": 32.72169243839539,
+    "FTR_Diff": 7.789341293906361,
+    "Def_FTR": 9.2455258147597,
+    "SOS_ZDiff": 1.8889355683185807,
+    "Location": 3.6737017735691313
+  },
+  "win_prob_slope": 0.14898045394540615,
+  "forward_summary": {
+    "current_eight_plus_home": {
+      "N": 23156,
+      "WinnerAccuracy": 0.6974002418379686,
+      "MarginMAE": 9.247575845254918,
+      "TourneyN": 268,
+      "TourneyWinnerAccuracy": 0.6082089552238806,
+      "TourneyMarginMAE": 11.457280248254676
+    },
+    "matchup_plus_home": {
+      "N": 23156,
+      "WinnerAccuracy": 0.6112022801865608,
+      "MarginMAE": 10.921812836481145,
+      "TourneyN": 268,
+      "TourneyWinnerAccuracy": 0.5671641791044776,
+      "TourneyMarginMAE": 12.450207583593118
+    },
+    "matchup_home_schedule": {
+      "N": 23156,
+      "WinnerAccuracy": 0.6100362756952842,
+      "MarginMAE": 10.849378463484713,
+      "TourneyN": 268,
+      "TourneyWinnerAccuracy": 0.6492537313432836,
+      "TourneyMarginMAE": 11.724252123731082
+    },
+    "eight_home_schedule": {
+      "N": 23156,
+      "WinnerAccuracy": 0.7040939713249266,
+      "MarginMAE": 9.088151556647256,
+      "TourneyN": 268,
+      "TourneyWinnerAccuracy": 0.6567164179104478,
+      "TourneyMarginMAE": 10.687619617788254
+    }
+  },
+  "forward_seasons": {
+    "current_eight_plus_home": [
+      {
+        "Season": 2022,
+        "N": 4419,
+        "WinnerAccuracy": 0.7015161801312514,
+        "MarginMAE": 9.008231004923301,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.582089552238806,
+        "TourneyMarginMAE": 11.20486228953262
+      },
+      {
+        "Season": 2023,
+        "N": 4677,
+        "WinnerAccuracy": 0.6955313234979688,
+        "MarginMAE": 9.245226658810742,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.5671641791044776,
+        "TourneyMarginMAE": 10.541633790867534
+      },
+      {
+        "Season": 2024,
+        "N": 4691,
+        "WinnerAccuracy": 0.6985717331059476,
+        "MarginMAE": 9.328385738858351,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.6417910447761194,
+        "TourneyMarginMAE": 12.558688643628448
+      },
+      {
+        "Season": 2025,
+        "N": 4713,
+        "WinnerAccuracy": 0.7037980055166561,
+        "MarginMAE": 9.30016496526616,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.6417910447761194,
+        "TourneyMarginMAE": 11.523936268990104
+      },
+      {
+        "Season": 2026,
+        "N": 4656,
+        "WinnerAccuracy": 0.6877147766323024,
+        "MarginMAE": 9.342447035314656,
+        "TourneyN": 0
+      }
+    ],
+    "matchup_plus_home": [
+      {
+        "Season": 2022,
+        "N": 4419,
+        "WinnerAccuracy": 0.6008146639511202,
+        "MarginMAE": 10.721238043275191,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.5522388059701493,
+        "TourneyMarginMAE": 11.746783144228838
+      },
+      {
+        "Season": 2023,
+        "N": 4677,
+        "WinnerAccuracy": 0.6151379089159718,
+        "MarginMAE": 10.744964746842248,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.5373134328358209,
+        "TourneyMarginMAE": 11.264389798239451
+      },
+      {
+        "Season": 2024,
+        "N": 4691,
+        "WinnerAccuracy": 0.6177787252185035,
+        "MarginMAE": 10.956366212453192,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.5522388059701493,
+        "TourneyMarginMAE": 14.019955806707621
+      },
+      {
+        "Season": 2025,
+        "N": 4713,
+        "WinnerAccuracy": 0.6168045830681095,
+        "MarginMAE": 11.050746880648976,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.6268656716417911,
+        "TourneyMarginMAE": 12.769701585196563
+      },
+      {
+        "Season": 2026,
+        "N": 4656,
+        "WinnerAccuracy": 0.6048109965635738,
+        "MarginMAE": 11.124498079086464,
+        "TourneyN": 0
+      }
+    ],
+    "matchup_home_schedule": [
+      {
+        "Season": 2022,
+        "N": 4419,
+        "WinnerAccuracy": 0.5994568906992532,
+        "MarginMAE": 10.642089921274717,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.6716417910447762,
+        "TourneyMarginMAE": 11.161235902122415
+      },
+      {
+        "Season": 2023,
+        "N": 4677,
+        "WinnerAccuracy": 0.6200555911909343,
+        "MarginMAE": 10.625717322409692,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.6268656716417911,
+        "TourneyMarginMAE": 10.634164407873898
+      },
+      {
+        "Season": 2024,
+        "N": 4691,
+        "WinnerAccuracy": 0.6152206352590066,
+        "MarginMAE": 10.90309059355523,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.6417910447761194,
+        "TourneyMarginMAE": 13.343565959022866
+      },
+      {
+        "Season": 2025,
+        "N": 4713,
+        "WinnerAccuracy": 0.6102270316146828,
+        "MarginMAE": 11.001952669491343,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.6567164179104478,
+        "TourneyMarginMAE": 11.758042225905145
+      },
+      {
+        "Season": 2026,
+        "N": 4656,
+        "WinnerAccuracy": 0.6045962199312714,
+        "MarginMAE": 11.062227559224356,
+        "TourneyN": 0
+      }
+    ],
+    "eight_home_schedule": [
+      {
+        "Season": 2022,
+        "N": 4419,
+        "WinnerAccuracy": 0.7044580221769631,
+        "MarginMAE": 8.845041493187416,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.5970149253731343,
+        "TourneyMarginMAE": 10.61973537396159
+      },
+      {
+        "Season": 2023,
+        "N": 4677,
+        "WinnerAccuracy": 0.710070558050032,
+        "MarginMAE": 9.095342146379497,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.6417910447761194,
+        "TourneyMarginMAE": 10.076922152259977
+      },
+      {
+        "Season": 2024,
+        "N": 4691,
+        "WinnerAccuracy": 0.7028352163717757,
+        "MarginMAE": 9.185538216355505,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.6865671641791045,
+        "TourneyMarginMAE": 11.814348292076483
+      },
+      {
+        "Season": 2025,
+        "N": 4713,
+        "WinnerAccuracy": 0.7071928707829408,
+        "MarginMAE": 9.111624775097079,
+        "TourneyN": 67,
+        "TourneyWinnerAccuracy": 0.7014925373134329,
+        "TourneyMarginMAE": 10.239472652854971
+      },
+      {
+        "Season": 2026,
+        "N": 4656,
+        "WinnerAccuracy": 0.6958762886597938,
+        "MarginMAE": 9.189784478255062,
+        "TourneyN": 0
+      }
+    ]
+  }
+}
